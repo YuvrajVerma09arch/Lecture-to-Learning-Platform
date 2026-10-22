@@ -202,6 +202,29 @@ The text chat at `POST /api/chat` uses exactly the same retrieval and
 answering code, so a student can type when the microphone is unavailable,
 and the demo can be driven from a script.
 
+### How the session is configured
+
+`agent/tutor.py` holds the wiring, and every parameter in it is there
+because a measurement put it there.
+
+| Setting | Value | Why |
+|---|---|---|
+| VAD | Silero, bundled ONNX, `min_silence_duration` 0.5 s | No network call, no credits, and it is LiveKit's own — so the turn lifecycle does not depend on the STT's `speech_end`, which never arrives |
+| Turn detection | `v1-mini`, the core detector, bundled ONNX | The deprecated `livekit-plugins-turn-detector` package is not used |
+| Endpointing | fixed, `min_delay` 0.6 s, `max_delay` 1.5 s | Long on purpose. A student who pauses mid-sentence, before a technical term, must not have the question answered half-way |
+| Interruption | enabled, `resume_false_interruption` on, `false_interruption_timeout` 1.5 s, `min_duration` 0.5 s | The student can barge in, and a student who is merely thinking is not cut off |
+| STT | `TunedGnaniSTT` — the official plugin plus the VAD headers and the silence injection | The plugin alone never delivers a transcript, because the server never hears the silence it needs |
+| TTS | `gnani.TTS`, `timbre-v2.5`, `synthesize_method="websocket"` | The websocket transport streams chunks, so the first complete sentence starts playing before the rest of the answer exists |
+| TTS voice | One per language: `Kaveri` (en-IN), `Nalini` (hi-IN), `Falak` (gu-IN), `Vani` (ta-IN, te-IN), `Soumya` (kn-IN), `Reshma` (ml-IN), `Kirra` (bn-IN), `Zahira` (mr-IN), `Mehuli` (pa-IN) | A Timbre v2.5 voice has exactly one preferred language, so the voice has to change with the language |
+| LLM | `chat_llm()` — Groq `qwen/qwen3.8-27b` | The fastest model this key can reach (0.35 s), and it streams content with no reasoning preamble, which matters because the answer is spoken aloud |
+| Grounding | One function tool, `search_lecture` | The tutor is told to look the answer up before answering, and the tool returns "the lecture does not cover this" when it is not covered |
+
+The tool is the whole grounding rule in one place: it searches the lecture,
+runs the same reranker the text chat uses, and returns the covered flag
+along with the answer. The tutor's instructions tell it to say plainly that
+the lecture does not cover the question rather than answering from its own
+knowledge.
+
 ## Components
 
 | Path | Module | Responsibility |
@@ -224,7 +247,8 @@ and the demo can be driven from a script.
 | Storage | `backend/app/db.py` | The schema, the versioned migration, the cache key |
 | Storage | `backend/app/logging_setup.py` | JSON logs, secret redaction, the collision-safe `makeRecord` |
 | Voice | `agent/stt_gnani.py` | A thin extension of the official Gnani plugin: VAD headers and trailing silence |
-| Voice | `agent/worker.py` | The LiveKit agent session |
+| Voice | `agent/tutor.py` | The session wiring, the grounding tool, the per-language voices, the turn timings |
+| Voice | `agent/worker.py` | The LiveKit agent session, and the latency markers it publishes into the room |
 | Voice | `agent/bench/` | The latency benchmark harness |
 
 ## The data model

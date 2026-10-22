@@ -37,7 +37,7 @@ docs/                 architecture, benchmark, security, demo script
 
 | Requirement | Version | Why |
 |---|---|---|
-| Python | 3.12.x | `onnxruntime` and `livekit-local-inference` publish wheels for cp310–cp314 only |
+| Python | 3.12.x | `livekit-agents` pulls in `livekit-local-inference` and its bundled ONNX models, which publish cp310–cp314 wheels |
 | ffmpeg + ffprobe | any recent build | transcoding, silence detection and duration probing during ingest |
 | Node.js | 20 or newer | the web front end only |
 | uv | any recent build | the virtual environment (a plain `venv` + `pip` also works) |

@@ -119,7 +119,7 @@ export function extractSourceSpans(markdown: string): SourceSpan[] {
 export function looksLikeEquation(text: string): boolean {
   if (!text || text.length > 160) return false;
   if (!/[=^≈→×÷±≤≥]/.test(text)) return false;
-  return /^[A-Za-z0-9_\\{}^()[\] \t+\-*/.,:;'"|]+$/.test(text);
+  return /^[A-Za-z0-9_\\{}^()[\]=\s+\-*/.,:;'"|]+$/.test(text);
 }
 
 /** Render an expression with KaTeX, falling back to plain text on error. */

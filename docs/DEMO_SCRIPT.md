@@ -170,8 +170,10 @@ and press send.
 **Say:** "Nothing in the lecture is about that. The system says so instead
 of answering from its own knowledge."
 
-The answer comes back as the abstention message, and the model is not even
-called — the retrieval gate rejects the question before the LLM is reached.
+The answer comes back as the abstention message. In the response, the
+`used_llm` field says whether the model was reached at all: with `false`,
+the retrieval gate rejected the question before the LLM was called, which
+is the cheapest way to guarantee no fabricated answer.
 
 ### 0:52 – 1:00 · The close
 
