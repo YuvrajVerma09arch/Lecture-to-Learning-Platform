@@ -153,9 +153,13 @@ class GnaniBatchClient:
         )
 
         last_error: Exception | None = None
+        # Every call to this API is authenticated with the same header.
+        headers = {**self._headers(), **(kwargs.pop("headers", None) or {})}
         for attempt in range(max_attempts):
             try:
-                async with session.request(method, url, timeout=timeout, **kwargs) as resp:
+                async with session.request(
+                    method, url, timeout=timeout, headers=headers, **kwargs
+                ) as resp:
                     if resp.status in RETRYABLE_STATUS:
                         body = await resp.text()
                         last_error = TranscribeError(

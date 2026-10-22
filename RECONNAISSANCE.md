@@ -471,29 +471,29 @@ Only decisions that materially change what gets built. **Items 1–3 are now clo
 
 | # | Assumption | Evidence | Confidence | How it will be validated |
 |---|---|---|---|---|
-| 1 | `livekit-agents` 1.8.8 + `livekit-plugins-gnani` 1.8.8 install and import cleanly on Python 3.12 arm64 | PyPI metadata; plugin source read | High | Fresh venv install + import smoke test, Phase 1 |
-| 2 | The Gnani plugin's websocket mode works against the live `/stt/v3/stream` | Plugin source; docs | Medium | Live STT smoke test with a 5-second clip, Phase 1 |
-| 3 | The server does **not** emit `speech_start`/`vad_end`, so the plugin's speech events may never fire | Plugin source handles them; docs omit them | **Low–Medium** | Live capture of the raw WS frame types in the first STT test; the `stt_gnani.py` subclass removes the dependency either way |
-| 4 | Gnani's per-file segment timestamps are file-relative (not job-absolute) | Docs silent | **Low** | Two-chunk probe job: compare `duration_seconds`/segment times of both files |
-| 5 | Batch STT supports `ta-IN` | Docs list `ta-IN` everywhere | High | One real batch job |
-| 6 | Batch STT supports `gu-IN` | Docs contradict (prose says no, schema says yes) | **Low** | One tiny `gu-IN` batch job, ~10 s of audio, negligible credits — run only if a Gujarati lecture is wanted |
-| 7 | Streaming STT supports `gu-IN` and `hi-IN` | Docs list both for Realtime | High | Live STT test in each language |
-| 8 | LiveKit's turn detector (`v1-mini`) works on the bundled ONNX model offline | Core source: `livekit.local_inference.EOT` | High | Turn-detection smoke test with no network |
-| 9 | The detector needs no transcript (audio-only EOT) | `push_frame`/`run_inference` in `eot/base.py` + `transports.py` | High | Confirm at runtime that EOT fires with Gnani's final-only transcripts |
-| 10 | `min_silence_duration=0.5` on the VAD is acceptable for pause-heavy Hinglish | Turn detector floor is 0.2 s | Medium | A/B measured on the hesitation test set; false-turn rate recorded |
-| 11 | `gemini-4-argon` accepts a full 45-min transcript in one context | Google models page; plugin constants (`LONG_DECODE_CONTEXT_WINDOW = 1_000_000`) | High | Real notes run; token counts logged |
-| 12 | Gemini 4 rejects `temperature`/`top_p`/`top_k` | Plugin source `_ignores_sampling_params` | High | Omit them; assert no 400 in the first call |
-| 13 | `llama-3.3-70b-versatile` gives acceptable Hindi/Hinglish and low TTFT | Groq catalogue; general knowledge of Llama 3.3's Indic pretraining | Medium | Benchmark on the curated doubt set (quality + TTFT) |
-| 14 | Gujarati generation quality is adequate on at least one candidate | Gemini docs exclude `gu`; Llama unverified | **Low** | Benchmark on ≥10 curated Gujarati doubts; fall back to Hindi with a clear note if it fails |
-| 15 | `livekit-server` builds and runs on darwin/arm64 from source | Go 1.26.5 present; module resolves on the Go proxy; `LocalStore` fallback verified in `wire.go` | Medium | **Dropped** — config C is an estimate by owner decision; the build path remains a documented alternative if C is ever revisited |
-| 16 | `lk agent deploy` is blocked without a container runtime | `lk agent create --help` (`--image` requires Docker; `--image-tar` needs a prebuilt tar); no Docker/Colima present | High | Confirmed by CLI help; **B is an estimate by owner decision** |
-| 17 | The Batch 10 MB limit requires chunking a 45-min lecture at common bitrates | 10 MB limit is documented; 45 min @ 128 kbps ≈ 42 MB, @ 64 kbps ≈ 21 MB, @ 32 kbps ≈ 10.5 MB | High | Computed; the pipeline transcodes to 16 kHz mono and chunks with margin |
-| 18 | FTS5 `unicode61` retrieves Devanagari/Gujarati/Hinglish correctly | **I ran it**: `पानी`, `પાણી`, `बाइनरी`, `ट्री`, `binary` all matched; `ટ્રી` did not (token absent from the row, not a tokenizer failure) | High | Covered by a retrieval unit test |
-| 19 | `gemini-embedding-2` exists and is usable | Found on Google's embeddings doc | Medium | Only exercised if the benchmark shows lexical recall is insufficient |
-| 20 | Gnani credit consumption follows the CallMissed rate card | **Reseller's** published rate, not Gnani's; Gnani publishes no rates | Medium | Read the usage dashboard at `app.gnani.ai/voice` after the first job and reconcile against the estimate |
-| 21 | The public Telugu lecture is acceptable as the demo artefact | CC BY-NC-ND 4.0, real human lecture, not a recorded call, so it respects the challenge's synthetic-data rule | High | **Confirmed by the owner.** Cite the licence in the write-up |
-| 22 | 20 measured turns per configuration is achievable | Scripted LiveKit client can drive a real room and capture audio | Medium | Build the driver in Phase 2; report the actual `n` honestly. Only config A is measured |
-| 23 | The LiveKit Cloud region is in or near India | Not checked — account not inspected | Low | Read the project region from the CLI/API before benchmarking, and record it with every measurement |
+| 1 | `livekit-agents` 1.8.8 + `livekit-plugins-gnani` 1.8.8 install and import cleanly on Python 3.12 arm64 | **MEASURED** — installed and imported; all four plugins report 1.8.8 | **High** | Done |
+| 2 | The Gnani plugin's websocket mode works against the live `/stt/v3/stream` | **MEASURED** — live session returned a correct Hindi transcript | **High** | Done |
+| 3 | The server does **not** emit `speech_start`/`vad_end`, so the plugin's speech events may never fire | **MEASURED — partially wrong.** The server *does* send `speech_start` (undocumented), but **never** sends `speech_end`/`vad_end`. So the plugin emits `START_OF_SPEECH` but never `END_OF_SPEECH`. | **High** (now measured) | Done — see `docs/live-api-findings.md` §1.1–1.2. The `stt_gnani.py` subclass derives both events from LiveKit's VAD. |
+| 4 | Gnani's per-file segment timestamps are file-relative (not job-absolute) | **MEASURED — confirmed.** A two-chunk job returned `min_start = 0.0` for both files. | **High** (now measured) | Done — see `docs/live-api-findings.md` §2.1 |
+| 5 | Batch STT supports `ta-IN` | **MEASURED** — job completed | **High** | Done |
+| 6 | Batch STT supports `gu-IN` | **MEASURED — the docs' prose was wrong.** `gu-IN` and `pa-IN` both completed successfully. The OpenAPI schema was right; the prose was not. | **High** (now measured) | Done — see `docs/live-api-findings.md` §2.2 |
+| 7 | Streaming STT supports `gu-IN` and `hi-IN` | **MEASURED** for `hi-IN`; `gu-IN` still to be exercised with real Gujarati audio (macOS has no Gujarati voice) | **High** for hi-IN, **Medium** for gu-IN | Live STT test in each language, Phase 2 |
+| 8 | LiveKit's turn detector (`v1-mini`) works on the bundled ONNX model offline | Core source: `livekit.local_inference.EOT`; the package ships the models in a 35 MB wheel | **High** | Turn-detection smoke test with no network, Phase 2 |
+| 9 | The detector needs no transcript (audio-only EOT) | `push_frame`/`run_inference` in `eot/base.py` + `transports.py` | **High** | Confirm at runtime that EOT fires with Gnani's final-only transcripts, Phase 2 |
+| 10 | `min_silence_duration=0.5` on the VAD is acceptable for pause-heavy Hinglish | Turn detector floor is 0.2 s; measured Gnani end-of-speech → transcript is 840 ms | **Medium** | A/B measured on the hesitation test set; false-turn rate recorded |
+| 11 | `gemini-4-argon` accepts a full 45-min transcript in one context | Google models page; plugin constants (`LONG_DECODE_CONTEXT_WINDOW = 1_000_000`) | **High** | Real notes run; token counts logged |
+| 12 | Gemini 4 rejects `temperature`/`top_p`/`top_k` | Plugin source `_ignores_sampling_params` | **High** | Omit them; assert no 400 in the first call |
+| 13 | `llama-3.3-70b-versatile` gives acceptable Hindi/Hinglish and low TTFT | Groq catalogue; general knowledge of Llama 3.3's Indic pretraining | **Medium** | Benchmark on the curated doubt set (quality + TTFT) |
+| 14 | Gujarati generation quality is adequate on at least one candidate | Gemini docs exclude `gu`; Llama unverified. *Note: Gujarati **speech** is fine — batch STT and Timbre both support `gu-IN` — so the risk is confined to the text model.* | **Low** | Benchmark on ≥10 curated Gujarati doubts; fall back to Hindi with a clear note if it fails |
+| 15 | `livekit-server` builds and runs on darwin/arm64 from source | Go 1.26.5 present; module resolves on the Go proxy | **Medium** | **Dropped** — config C is an estimate by owner decision |
+| 16 | `lk agent deploy` is blocked without a container runtime | `lk agent create --help`; no Docker/Colima present | **High** | Confirmed; **B is an estimate by owner decision** |
+| 17 | The Batch 10 MB limit requires chunking a 45-min lecture at common bitrates | 10 MB limit documented; 45 min @ 128 kbps ≈ 42 MB | **High** | Computed; the pipeline transcodes to 16 kHz mono and chunks with margin |
+| 18 | FTS5 `unicode61` retrieves Devanagari/Gujarati/Hinglish correctly | **MEASURED** — `पानी`, `પાણી`, `बाइनरी`, `ट्री`, `binary` all matched | **High** | Covered by a retrieval unit test |
+| 19 | `gemini-embedding-2` exists and is usable | Found on Google's embeddings doc | **Medium** | Only exercised if the benchmark shows lexical recall is insufficient |
+| 20 | Gnani credit consumption follows the CallMissed rate card | **Reseller's** published rate, not Gnani's; Gnani publishes no rates | **Medium** | Read the usage dashboard at `app.gnani.ai/voice` after the first job and reconcile against the estimate |
+| 21 | The public Telugu lecture is acceptable as the demo artefact | CC BY-NC-ND 4.0, real human lecture, not a recorded call | **High** | **Confirmed by the owner.** Cite the licence in the write-up |
+| 22 | 20 measured turns per configuration is achievable | Scripted LiveKit client can drive a real room and capture audio | **Medium** | Build the driver in Phase 2; report the actual `n` honestly. Only config A is measured |
+| 23 | The LiveKit Cloud region is in or near India | **MEASURED: the project is `wss://name-5pv71xyx.livekit.cloud` — a US region.** | **Low** (it is US) | Read the region from the CLI/API before benchmarking and record it with every measurement. The brief asks for runs from Ahmedabad; a US SFU adds a long leg, so this is stated plainly in the benchmark report rather than glossed over. |
 
 ---
 
