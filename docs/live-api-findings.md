@@ -171,7 +171,86 @@ that matters for perceived latency, and it is measured in Phase 2.
 
 ---
 
-## 4. What the live behaviour implies for the design
+## 4. LLM providers — what the configured keys can actually reach
+
+Measured on 2026-10-22 with `scripts/probe_llm_models.py`. A model can be
+listed in a provider's catalogue and still be unavailable to a particular
+account, so each candidate was probed with a real request.
+
+### 4.1 Groq
+
+| Model | Result | Time |
+|---|---|---|
+| `qwen/qwen3.8-27b` | **OK** | 0.35 s |
+| `openai/gpt-oss-120b` | OK | 1.03 s |
+| `openai/gpt-oss-20b` | OK | 0.73 s |
+| `llama-3.3-70b-versatile` | 404 for this account | — |
+| `llama-3.1-8b-instant` | 404 for this account | — |
+| `qwen/qwen3-32b` | 404 for this account | — |
+| `moonshotai/kimi-k2-instruct-0905` | 404 for this account | — |
+| `meta-llama/llama-4-scout-17b-16e-instruct` | 404 for this account | — |
+| `deepseek-r1-distill-llama-70b` | decommissioned | — |
+| `gemma2-9b-it` | decommissioned | — |
+
+`qwen/qwen3.8-27b` streams clean content with **no reasoning preamble**,
+which matters because the answer is spoken aloud. Verified by reading the
+raw token stream.
+
+**Rate limit, measured:** the free tier allows **1000 output tokens per
+minute** for `qwen/qwen3.8-27b`. The error is explicit:
+`Rate limit reached ... on output tokens per minute (OTPM): Limit 1000,
+Used 895, Requested 795. Please try again in 41.4s.` `gpt-oss-120b` and
+`gpt-oss-20b` produced 1200-word and 940-word completions without being
+rejected, so their budget is larger.
+
+### 4.2 Google Gemini
+
+| Model | Result | Time |
+|---|---|---|
+| `gemini-3.5-flash` | **OK** | 2.88 s |
+| `gemini-3.1-flash-lite` | OK | 6.39 s |
+| `gemini-4-argon` | 429 quota exceeded | — |
+| `gemini-3.8-flash` | 503/504, high demand | — |
+| `gemini-2.5-flash` | 404 for this account | — |
+| `gemini-2.5-pro` | 404 for this account | — |
+
+`GET /v1beta/models` lists 50 models including `gemini-4-argon` and
+`gemini-3.8-flash`, so **the catalogue is not the constraint** — the
+account's quota is.
+
+**The quota, measured:** the free tier allows **20 requests per day per
+model per project**
+(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). The error states
+`Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests,
+limit: 20 ... Please retry in 20h38m.`
+
+This is a **daily** quota, and its status code is 429 — identical to a
+per-minute rate limit. That ambiguity caused a real failure: a retry
+loop could not tell them apart, retried the quota error three times per
+segment, and turned 9 needed calls into 24, exhausting the day. Errors
+are now classified, a quota error is never retried, and the notes
+workload falls back to a provider on a different account.
+
+### 4.3 What this means for the design
+
+1. **Both free tiers are tight.** 20 requests/day from one provider and
+   1000 output tokens/minute from the other. The notes workload for one
+   lecture is 8 segment notes plus 1 merge.
+2. **Model calls are paced, not parallel.** 2 s apart, serialised, with
+   the per-segment note asked for three to five sentences. Eight paced
+   short notes fit inside one token-budget window; eight parallel long
+   ones do not.
+3. **The provider's own retry hint is authoritative.** "Please try again
+   in 41.4s" is parsed and honoured, because a per-minute budget refills
+   on a schedule the caller cannot guess.
+4. **The notes workload has a provider chain**, primary Google, fallback
+   Groq, switched automatically on a quota error. Both are already
+   authorised; no new service was introduced.
+5. **The configured model defaults are the ones that work.** They are
+   env-overridable, and `scripts/probe_llm_models.py` re-checks them.
+
+---
+
 
 1. **The turn lifecycle must not depend on the plugin's `speech_end`.**
    It never arrives. The `stt_gnani.py` subclass derives speech events from
