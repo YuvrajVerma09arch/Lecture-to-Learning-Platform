@@ -1,0 +1,36 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+web/dist/
+web/.vite/
+
+# Project data: SQLite DB, cached transcripts, uploaded audio, benchmark logs
+data/
+!data/.gitkeep
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Benchmark / measurement artefacts
+benchmarks/results/
+*.bench.jsonl
+
+# OS
+.DS_Store
+
+# Session-continuation state (not project content)
+.omo/
