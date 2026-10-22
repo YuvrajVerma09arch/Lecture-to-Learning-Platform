@@ -22,14 +22,79 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from ..config import get_settings
 from ..logging_setup import get_logger
 
 log = get_logger(__name__)
 
 
+class ErrorKind:
+    """Why a model call failed, and whether retrying can help."""
+
+    QUOTA = "quota"          # daily/period quota exhausted; retrying now is useless
+    RATE_LIMIT = "rate_limit"  # per-minute limit; retrying after a pause may work
+    SERVER = "server"        # provider 5xx; retrying usually works
+    CLIENT = "client"        # request rejected; retrying the same request will not
+    SHAPE = "shape"          # the reply did not match the schema; a retry may
+    UNKNOWN = "unknown"
+
+
+#: Kinds worth retrying straight away.
+RETRYABLE_KINDS = frozenset({ErrorKind.RATE_LIMIT, ErrorKind.SERVER, ErrorKind.SHAPE})
+
+
 class LLMError(Exception):
-    """A model call failed in a way the caller should handle."""
+    """A model call failed in a way the caller should handle.
+
+    ``kind`` says why. This matters: Google's free tier allows 20 requests
+    per model per day, and its quota error is a 429 -- the same status as a
+    per-minute rate limit. Retrying a quota error immediately burns the
+    remaining daily allowance and still fails, so the two must be
+    distinguished.
+    """
+
+    def __init__(self, message: str, *, kind: str = ErrorKind.UNKNOWN) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind in RETRYABLE_KINDS
+
+    @property
+    def is_quota(self) -> bool:
+        return self.kind == ErrorKind.QUOTA
+
+
+def classify_error(exc: Exception) -> LLMError:
+    """Turn a provider exception into a classified :class:`LLMError`."""
+    # An error that is already classified keeps its classification.
+    # Re-deriving it from the message would lose the distinction: a
+    # quota error and a rate limit are both 429, and re-deriving would
+    # turn a non-retryable quota error into a retryable rate limit.
+    if isinstance(exc, LLMError):
+        return exc
+
+    message = str(exc)
+    lowered = message.lower()
+
+    if "exceeded your current quota" in lowered or "resource_exhausted" in lowered:
+        return LLMError(message, kind=ErrorKind.QUOTA)
+    if "quota" in lowered:
+        return LLMError(message, kind=ErrorKind.QUOTA)
+    if "429" in message or "rate limit" in lowered or "too many requests" in lowered:
+        return LLMError(message, kind=ErrorKind.RATE_LIMIT)
+    if "503" in message or "502" in message or "504" in message or "unavailable" in lowered:
+        return LLMError(message, kind=ErrorKind.SERVER)
+    if "401" in message or "403" in message or "invalid_api_key" in lowered:
+        return LLMError(message, kind=ErrorKind.CLIENT)
+    if "404" in message and "model" in lowered:
+        return LLMError(message, kind=ErrorKind.CLIENT)
+    if "did not match the required shape" in lowered or "not valid json" in lowered:
+        return LLMError(message, kind=ErrorKind.SHAPE)
+    return LLMError(message, kind=ErrorKind.UNKNOWN)
 
 
 @dataclass
@@ -42,6 +107,8 @@ class LLMReply:
     input_tokens: int = 0
     output_tokens: int = 0
     finish_reason: str = ""
+    # The parsed JSON payload, when the reply was JSON.
+    data: dict[str, Any] | None = None
 
 
 def _extract_json(text: str) -> Any:
@@ -53,7 +120,7 @@ def _extract_json(text: str) -> Any:
     """
     cleaned = text.strip()
     if not cleaned:
-        raise LLMError("Model returned an empty response")
+        raise LLMError("Model returned an empty response", kind=ErrorKind.SHAPE)
 
     # Strip markdown fences.
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
@@ -96,25 +163,9 @@ def _extract_json(text: str) -> Any:
                         return json.loads(candidate)
                     except json.JSONDecodeError:
                         break
-    raise LLMError(f"Model response was not valid JSON: {cleaned[:200]}")
-
-
-def _strip_schemas(response_format: Any) -> Any:
-    """Recursively drop unsupported ``$schema`` / ``additionalProperties`` keys.
-
-    Gemini's structured-output schema validator rejects a few JSON-Schema
-    keywords that OpenAI accepts. Stripping them here means one prompt
-    definition works on both.
-    """
-    if isinstance(response_format, dict):
-        return {
-            k: _strip_schemas(v)
-            for k, v in response_format.items()
-            if k not in ("$schema", "additionalProperties")
-        }
-    if isinstance(response_format, list):
-        return [_strip_schemas(v) for v in response_format]
-    return response_format
+    raise LLMError(
+        f"Model response was not valid JSON: {cleaned[:200]}", kind=ErrorKind.SHAPE
+    )
 
 
 def notes_llm() -> Any:
@@ -169,12 +220,55 @@ def chat_llm() -> Any:
     return groq.LLM(model=model, api_key=settings.groq_api_key)
 
 
+def notes_llm_chain(*, segment: bool = False) -> list[Any]:
+    """The notes workload's provider chain, in preference order.
+
+    The first entry is the primary. The second is a fallback on a
+    *different* provider, because the failure that actually bites is a
+    quota exhaustion on one account: Google's free tier allows 20
+    requests per model per day, and a lecture with eight topic segments
+    needs nine. When the primary's quota is gone, the pipeline continues
+    on the fallback rather than failing.
+
+    Both entries are provider-agnostic from here on: the rest of the
+    pipeline only sees the LiveKit ``LLM`` interface.
+    """
+    settings = get_settings()
+    chain: list[Any] = []
+
+    if settings.has_google():
+        from livekit.plugins import google
+
+        model = (
+            settings.llm_model_notes_segments if segment else settings.llm_model_notes
+        )
+        chain.append(google.LLM(model=model, api_key=settings.google_api_key))
+        log.info("notes llm chain", extra={"provider": "google", "model": model, "role": "primary"})
+
+    if settings.has_groq():
+        from livekit.plugins import groq
+
+        # The fallback reuses the conversational model: it is fast, streams
+        # cleanly and handles Indic text.
+        chain.append(groq.LLM(model=settings.llm_model_chat, api_key=settings.groq_api_key))
+        log.info(
+            "notes llm chain",
+            extra={"provider": "groq", "model": settings.llm_model_chat, "role": "fallback"},
+        )
+
+    if not chain:
+        raise LLMError(
+            "No LLM provider is configured. Set GOOGLE_API_KEY or GROQ_API_KEY."
+        )
+    return chain
+
+
 async def complete_json(
     llm: Any,
     *,
     prompt: str,
     system: str = "",
-    schema: dict[str, Any] | None = None,
+    schema: type[BaseModel] | None = None,
     max_output_tokens: int = 8192,
 ) -> LLMReply:
     """Run one non-streaming completion and parse a JSON reply.
@@ -182,23 +276,40 @@ async def complete_json(
     We use the LiveKit ``LLM`` interface rather than a provider SDK so the
     same code path works for either workload and the provider can be swapped
     without touching the pipeline.
+
+    ``schema`` is a pydantic model class. LiveKit's structured-output
+    plumbing requires a model (or a TypedDict); a raw JSON-schema dict is
+    explicitly unsupported, so the payloads are typed here instead.
     """
 
     chat_ctx = _build_context(system, prompt)
 
     kwargs: dict[str, Any] = {"chat_ctx": chat_ctx}
     if schema is not None:
-        kwargs["response_format"] = _strip_schemas(schema)
+        kwargs["response_format"] = schema
 
     try:
         stream = llm.chat(**kwargs)
         reply = await stream.collect()
     except Exception as exc:  # noqa: BLE001 - normalise provider errors
-        raise LLMError(f"Model call failed: {exc}") from exc
+        raise classify_error(exc) from exc
 
     text = (reply.text or "").strip()
     if not text:
-        raise LLMError("Model returned an empty response")
+        raise LLMError("Model returned an empty response", kind=ErrorKind.SHAPE)
+
+    # Parse the JSON and, when a schema was given, validate it. A shape
+    # error is reported here rather than surfacing as a confusing
+    # KeyError deeper in the pipeline.
+    data = _extract_json(text)
+    if schema is not None:
+        try:
+            data = schema.model_validate(data).model_dump()
+        except ValidationError as exc:
+            raise LLMError(
+                f"Model response did not match the required shape: {exc}",
+                kind=ErrorKind.SHAPE,
+            ) from exc
 
     usage = getattr(reply, "usage", None)
     return LLMReply(
@@ -207,6 +318,7 @@ async def complete_json(
         model=getattr(llm, "model", "") or "",
         input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
         output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        data=data,
     )
 
 

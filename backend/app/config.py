@@ -42,13 +42,24 @@ class Settings(BaseSettings):
     livekit_api_secret: str = Field(default="", repr=False)
 
     # --- LLM: Workload A (notes) ---
+    # The defaults are the models that were *measured* to work with this
+    # project's key on 2026-10-22, not the newest published models.
+    # `gemini-4-argon` returned 429 (quota) and `gemini-3.8-flash` returned
+    # 503/504 (high demand) on that account; `gemini-3.5-flash` answered
+    # in 2.9s. Override with LLM_MODEL_NOTES when the quota allows a
+    # better model.
     google_api_key: str = Field(default="", repr=False)
-    llm_model_notes: str = "gemini-4-argon"
-    llm_model_notes_segments: str = "gemini-3.8-flash"
+    llm_model_notes: str = "gemini-3.5-flash"
+    llm_model_notes_segments: str = "gemini-3.5-flash"
 
     # --- LLM: Workload B (conversational doubts) ---
+    # `llama-3.3-70b-versatile` returned 404 for this account, so it is
+    # not a usable default. `qwen/qwen3.8-27b` answered in 0.35s, is the
+    # fastest available option, and Qwen3 is among the stronger families
+    # for Hindi/Hinglish. It streams clean content with no reasoning
+    # preamble, which matters because the answer is spoken aloud.
     groq_api_key: str = Field(default="", repr=False)
-    llm_model_chat: str = "llama-3.3-70b-versatile"
+    llm_model_chat: str = "qwen/qwen3.8-27b"
 
     # --- Storage ---
     # These read DATA_DIR / DB_PATH / CACHE_DIR from the environment, so a

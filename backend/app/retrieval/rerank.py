@@ -20,7 +20,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..llm.factory import LLMError, complete_json, parse_json_reply
+from pydantic import BaseModel, Field
+
+from ..llm.factory import LLMError, complete_json
 from ..logging_setup import get_logger
 from .fts import RetrievedSegment, format_context
 
@@ -29,17 +31,14 @@ log = get_logger(__name__)
 # Delay between a failed model call and the next attempt.
 RETRY_DELAY_SECONDS = 0.5
 
-ANSWER_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "covered": {"type": "boolean"},
-        "answer": {"type": "string"},
-        "cited_segments": {"type": "array", "items": {"type": "integer"}},
-        "confidence": {"type": "number"},
-        "note": {"type": "string"},
-    },
-    "required": ["covered", "answer", "cited_segments"],
-}
+class GroundedAnswerPayload(BaseModel):
+    """The structured shape the model must return for a grounded answer."""
+
+    covered: bool = False
+    answer: str = ""
+    cited_segments: list[int] = Field(default_factory=list)
+    confidence: float = 0.0
+    note: str = ""
 
 ANSWER_SYSTEM = """You answer a student's question using ONLY the lecture excerpts provided.
 
@@ -146,9 +145,9 @@ async def answer_grounded(
     for attempt in range(max_attempts):
         try:
             reply = await complete_json(
-                model, prompt=prompt, system=ANSWER_SYSTEM, schema=ANSWER_SCHEMA
+                model, prompt=prompt, system=ANSWER_SYSTEM, schema=GroundedAnswerPayload
             )
-            data = parse_json_reply(reply)
+            data = reply.data or {}
         except LLMError as exc:
             last_error = str(exc)
             await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))

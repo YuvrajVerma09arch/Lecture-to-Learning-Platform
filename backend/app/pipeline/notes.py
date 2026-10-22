@@ -29,7 +29,9 @@ import asyncio
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..llm.factory import LLMError, complete_json, notes_llm, notes_segments_llm, parse_json_reply
+from pydantic import BaseModel, Field
+
+from ..llm.factory import ErrorKind, LLMError, complete_json, notes_llm_chain
 from ..logging_setup import get_logger
 from .segment import Segment, format_timestamp
 
@@ -127,55 +129,40 @@ class NotesDocument:
         return "\n".join(lines).strip() + "\n"
 
 
-SEGMENT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "heading": {"type": "string"},
-        "explanation": {"type": "string"},
-        "key_terms": {"type": "array", "items": {"type": "string"}},
-        "equations": {"type": "array", "items": {"type": "string"}},
-        "uncertainty_note": {"type": "string"},
-    },
-    "required": ["heading", "explanation", "key_terms", "equations"],
-}
+class SegmentNotePayload(BaseModel):
+    """The structured shape the model must return for one segment."""
 
-MERGE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "summary": {"type": "string"},
-        "sections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "heading": {"type": "string"},
-                    "explanation": {"type": "string"},
-                    "subheadings": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "heading": {"type": "string"},
-                                "body": {"type": "string"},
-                                "equations": {"type": "array", "items": {"type": "string"}},
-                            },
-                            "required": ["heading", "body"],
-                        },
-                    },
-                    "key_terms": {"type": "array", "items": {"type": "string"}},
-                    "equations": {"type": "array", "items": {"type": "string"}},
-                    "segment_indexes": {"type": "array", "items": {"type": "integer"}},
-                    "visual_dependent": {"type": "boolean"},
-                    "uncertainty_note": {"type": "string"},
-                },
-                "required": ["heading", "explanation", "segment_indexes"],
-            },
-        },
-        "key_terms": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["title", "summary", "sections", "key_terms"],
-}
+    heading: str = ""
+    explanation: str = ""
+    key_terms: list[str] = Field(default_factory=list)
+    equations: list[str] = Field(default_factory=list)
+    uncertainty_note: str = ""
+
+
+class SubheadingPayload(BaseModel):
+    heading: str = ""
+    body: str = ""
+    equations: list[str] = Field(default_factory=list)
+
+
+class SectionPayload(BaseModel):
+    heading: str = ""
+    explanation: str = ""
+    subheadings: list[SubheadingPayload] = Field(default_factory=list)
+    key_terms: list[str] = Field(default_factory=list)
+    equations: list[str] = Field(default_factory=list)
+    segment_indexes: list[int] = Field(default_factory=list)
+    visual_dependent: bool = False
+    uncertainty_note: str = ""
+
+
+class MergedDocumentPayload(BaseModel):
+    """The structured shape the model must return for the merged document."""
+
+    title: str = ""
+    summary: str = ""
+    sections: list[SectionPayload] = Field(default_factory=list)
+    key_terms: list[str] = Field(default_factory=list)
 
 SEGMENT_SYSTEM = """You turn a slice of a classroom lecture transcript into study notes for Indian college students.
 
@@ -248,18 +235,28 @@ async def generate_segment_note(
 
     Retries on malformed or empty output, with a stricter instruction added
     on each attempt.
+
+    A quota error is *not* retried. Google's free tier allows 20 requests
+    per model per day, and its quota error is a 429 -- indistinguishable
+    from a rate limit by status code alone. Retrying it burns the rest of
+    the daily allowance and still fails, so it propagates immediately and
+    the caller switches provider.
     """
     prompt = _segment_prompt(segment)
     last_error = ""
+    last_kind = ErrorKind.UNKNOWN
 
     for attempt in range(max_attempts):
         try:
             reply = await complete_json(
-                llm, prompt=prompt, system=SEGMENT_SYSTEM, schema=SEGMENT_SCHEMA
+                llm, prompt=prompt, system=SEGMENT_SYSTEM, schema=SegmentNotePayload
             )
-            data = parse_json_reply(reply)
+            data = reply.data or {}
         except LLMError as exc:
+            if not exc.retryable:
+                raise
             last_error = str(exc)
+            last_kind = exc.kind
             await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
             continue
 
@@ -282,34 +279,66 @@ async def generate_segment_note(
             "segment note rejected, retrying",
             extra={"segment_index": segment.index, "attempt": attempt + 1, "problems": last_error},
         )
-        await asyncio.sleep(0.5 * (attempt + 1))
+        await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
 
     raise LLMError(
         f"Could not produce a valid note for segment {segment.index} after "
-        f"{max_attempts} attempts: {last_error}"
+        f"{max_attempts} attempts: {last_error}",
+        kind=last_kind,
     )
 
 
 async def generate_segment_notes(
     segments: list[Segment],
     *,
-    concurrency: int = 4,
+    concurrency: int = 2,
     llm: Any = None,
+    chain: list[Any] | None = None,
 ) -> list[SegmentNote]:
     """Generate notes for every segment, concurrently.
 
     A failure in one segment is recorded and the rest continue -- the merge
     step is told which segments are missing rather than silently losing
     them.
+
+    When the primary provider's quota is exhausted, the remaining segments
+    are generated on the fallback provider rather than failing outright.
     """
-    model = llm or notes_segments_llm()
+    if chain is None:
+        chain = [llm] if llm is not None else notes_llm_chain(segment=True)
     semaphore = asyncio.Semaphore(concurrency)
+    # Index into the provider chain. It only moves forward, and only when
+    # a provider fails in a way another provider can fix.
+    state = {"index": 0}
 
     async def one(segment: Segment) -> tuple[int, SegmentNote | None, str | None]:
         async with semaphore:
+            # Pick the provider for this call. The chain only advances
+            # when a provider fails in a way another provider can fix.
+            provider = chain[min(state["index"], len(chain) - 1)]
             try:
-                return segment.index, await generate_segment_note(model, segment), None
+                return segment.index, await generate_segment_note(provider, segment), None
             except LLMError as exc:
+                if exc.is_quota and state["index"] < len(chain) - 1:
+                    state["index"] += 1
+                    log.warning(
+                        "notes provider quota exhausted, switching to the fallback",
+                        extra={
+                            "segment_index": segment.index,
+                            "error_kind": exc.kind,
+                            "error": str(exc)[:200],
+                        },
+                    )
+                    # Retry this segment on the next provider.
+                    try:
+                        provider = chain[state["index"]]
+                        return (
+                            segment.index,
+                            await generate_segment_note(provider, segment),
+                            None,
+                        )
+                    except LLMError as exc2:
+                        return segment.index, None, str(exc2)
                 return segment.index, None, str(exc)
 
     results = await asyncio.gather(*(one(s) for s in segments))
@@ -376,6 +405,11 @@ def _validate_document(
         problems.append("no sections produced")
         return problems
 
+    # The brief requires a lecture summary. An empty one is a defect, not a
+    # cosmetic gap, so it is rejected and regenerated.
+    if not str(document.get("summary") or "").strip():
+        problems.append("no summary produced")
+
     covered: set[int] = set()
     for i, section in enumerate(sections):
         heading = str(section.get("heading") or "").strip()
@@ -426,19 +460,35 @@ async def merge_notes(
     title: str,
     llm: Any = None,
     max_attempts: int = 3,
+    chain: list[Any] | None = None,
 ) -> NotesDocument:
-    """Merge per-segment notes into one coherent document."""
-    model = llm or notes_llm()
-    prompt = _merge_prompt(segments, notes)
+    """Merge per-segment notes into one coherent document.
+
+    Falls back to another provider if the primary's quota is exhausted.
+    """
+    if chain is None:
+        chain = [llm] if llm is not None else notes_llm_chain(segment=False)
+    state = {"index": 0}
     last_error = ""
 
     for attempt in range(max_attempts):
+        model = chain[min(state["index"], len(chain) - 1)]
+        prompt = _merge_prompt(segments, notes)
         try:
             reply = await complete_json(
-                model, prompt=prompt, system=MERGE_SYSTEM, schema=MERGE_SCHEMA
+                model, prompt=prompt, system=MERGE_SYSTEM, schema=MergedDocumentPayload
             )
-            data = parse_json_reply(reply)
+            data = reply.data or {}
         except LLMError as exc:
+            if exc.is_quota and state["index"] < len(chain) - 1:
+                state["index"] += 1
+                log.warning(
+                    "notes provider quota exhausted, switching to the fallback",
+                    extra={"error_kind": exc.kind, "error": str(exc)[:200]},
+                )
+                continue
+            if not exc.retryable:
+                raise
             last_error = str(exc)
             await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
             continue

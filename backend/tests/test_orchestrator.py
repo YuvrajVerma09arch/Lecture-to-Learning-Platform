@@ -103,8 +103,11 @@ def fake_llms(monkeypatch):
             "key_terms": ["networks"],
         }
     )
-    monkeypatch.setattr(orchestrator.notes_mod, "notes_segments_llm", lambda: segment_llm)
-    monkeypatch.setattr(orchestrator.notes_mod, "notes_llm", lambda: merge_llm)
+    monkeypatch.setattr(
+        orchestrator.notes_mod,
+        "notes_llm_chain",
+        lambda segment=False: [segment_llm if segment else merge_llm],
+    )
     return segment_llm, merge_llm
 
 

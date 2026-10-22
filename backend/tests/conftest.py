@@ -116,6 +116,9 @@ class _FakeStream:
         text = self._payload if isinstance(self._payload, str) else json.dumps(self._payload)
         return _FakeReply(text)
 
+    def __aiter__(self):
+        return self
+
 
 class _FakeReply:
     def __init__(self, text: str) -> None:
