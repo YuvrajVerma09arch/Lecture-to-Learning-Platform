@@ -46,7 +46,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
     const item = listRef.current.querySelector<HTMLElement>(
       `[data-toc-id="${currentId}"]`,
     );
-    item?.scrollIntoView({ block: "nearest" });
+    item?.scrollIntoView?.({ block: "nearest" });
   }, [currentId]);
 
   if (headings.length === 0) return null;
@@ -54,7 +54,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
   const jump = (id: string) => {
     const target = document.getElementById(id);
     if (!target) return;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.scrollIntoView?.({ behavior: "smooth", block: "start" });
     target.focus({ preventScroll: true });
     setCurrentId(id);
   };

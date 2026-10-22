@@ -225,17 +225,18 @@ curl -s -X POST http://127.0.0.1:8000/api/lectures/upload \
   -F "language_code=te-IN" | python3 -m json.tool
 ```
 
-and then:
+and then, in the API's terminal:
 
 ```bash
-curl -s http://127.0.0.1:8000/api/lectures | python3 -m json.tool
+grep "cache hit" /path/to/the/api/log
 ```
 
-The new lecture's `stages.transcribe` reads `cache hit, no transcription
-needed`, and no new row appears in `credit_usage`. Note that the upload
-creates a *new* lecture row for the same cached transcript, and that the
-note stage re-runs in the background for that new row; the original lecture
-id, `lec_54a9c1e582af41d0`, is untouched.
+The log line reads `transcript cache hit, skipping transcription`, and no
+new row appears in `credit_usage` — the credit ledger is the ledger of Gnani
+jobs, and no job was created. The upload also creates a *new* lecture row
+for the same cached transcript, and the segmentation, the embedding index
+and the note generation re-run in the background for that new row (about
+200 s). The original lecture id, `lec_54a9c1e582af41d0`, is untouched.
 
 ## Resetting or reseeding the demo state
 

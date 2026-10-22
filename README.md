@@ -24,7 +24,7 @@ backend/app/          FastAPI application
   pipeline/           ingest -> transcribe -> segment -> note -> merge
   retrieval/          FTS5 + embeddings (hybrid search), grounded reranking
   llm/                provider-neutral model access, error classification
-backend/tests/        186 tests, all offline
+backend/tests/        219 tests, all offline
 agent/                the LiveKit agent worker and the STT subclass
   bench/              the latency benchmark harness
 web/                  Vite + React + TypeScript front end
@@ -230,6 +230,14 @@ the first 4,000 characters of the notes, and writes the document to
 hit**: the transcript is looked up by content hash, no Gnani job is created
 and no credits are spent.
 
+`data/fixtures/telugu_lecture_ch5.mp3` is the demo lecture: *Bhagavad Gita
+Chapter 5 with Shankara Bhashya* by Swami Tattvividananda Saraswati
+(Ramakrishna Math, 2007), from the Internet Archive item
+`BhagvadGitaChapter5WithShankaraBhashya`, CC BY-NC-ND 4.0, creator
+`rparimi`. The whole of `data/` is gitignored, so the file is a local
+artefact — download it again from the Internet Archive if it is missing.
+Any recording in a supported format works in its place.
+
 ### The API probes
 
 These are the scripts that produced `docs/live-api-findings.md`. They call
@@ -249,7 +257,7 @@ PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py   # turn-taking s
 .venv/bin/python -m pytest -q
 ```
 
-186 tests, all passing, in about 45 seconds. **No test calls a remote API.**
+219 tests, all passing, in about 45 seconds. **No test calls a remote API.**
 The Gnani and LLM clients are replaced with fakes, every test gets its own
 temporary SQLite file and cache directory, and the retry delays are shortened.
 A test that does exercise the live API is marked `@pytest.mark.live` and is

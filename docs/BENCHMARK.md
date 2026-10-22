@@ -54,7 +54,7 @@ readings. Nothing is computed by subtracting two unrelated clocks.
 
 | Condition | Value |
 |---|---|
-| Network | The developer's own machine, on the network described in the brief (Ahmedabad, India). The LiveKit Cloud project region was **not** recorded programmatically and is **UNVERIFIED** |
+| Network | The developer's own machine, on the network described in the brief (Ahmedabad, India). The LiveKit Cloud project is `name-5pv71xyx.livekit.cloud`, a **US region**, as confirmed by the project owner |
 | Concurrency | 1 |
 | STT | Gnani Prisma, streaming, `x-min-silence-ms: 700` |
 | LLM (chat) | Groq `qwen/qwen3.8-27b` |
@@ -260,7 +260,7 @@ This is the shipping configuration, and the only one that was exercised.
 |---|---|
 | Architecture | The agent worker runs on the developer's machine; the browser, the API and the agent all talk to LiveKit Cloud for the media |
 | Component locations | Browser → LiveKit Cloud (media) → agent worker → Gnani / Groq / Gemini; the API and the SQLite file stay on the machine |
-| Service regions | LiveKit Cloud: **UNVERIFIED**, the project region was not recorded programmatically. The three AI providers: their regions are **UNVERIFIED** from this project |
+| Service regions | LiveKit Cloud: **MEASURED**, a US region (`name-5pv71xyx.livekit.cloud`, confirmed by the project owner). The three AI providers: their regions are **UNVERIFIED** from this project |
 | Network path | Student audio → LiveKit Cloud → worker; the worker's three AI calls each leave the machine to a different provider |
 | Reliability | The chain has four remote dependencies in series; a failure in any one of them is visible in `/api/ready` and degrades to the text path |
 | Deployment complexity | Two processes to start, no container runtime, no infrastructure to provision |
@@ -335,7 +335,7 @@ happened.
 
 ### MOCKED
 
-The whole test suite: 186 tests, none of which call a remote API. The Gnani
+The whole test suite: 219 tests, none of which call a remote API. The Gnani
 and LLM clients are replaced with fakes, every test gets its own temporary
 SQLite file and cache directory, and the retry delays are shortened. A test
 that does exercise a live API is marked `@pytest.mark.live` and is skipped
@@ -353,7 +353,7 @@ downstream failure never destroys a cached transcript.
 | Item | Why |
 |---|---|
 | Gnani's own credit rate | Gnani publishes no rate card. The dashboard is the authority and has not been read |
-| The LiveKit Cloud project region | Not recorded programmatically |
+| The LiveKit Cloud project region | Resolved: it is a US region. The project owner confirmed it |
 | The cost of configuration B | The account's usage panel has not been read |
 | The end-to-end user-perceived latency of a voice turn | The run had not happened when this report was written — see §3.3 |
 | Whether a Gujarati *lecture* transcribes as well as a Hindi one | The batch API accepts `gu-IN` (measured), but no Gujarati audio was available to test with |

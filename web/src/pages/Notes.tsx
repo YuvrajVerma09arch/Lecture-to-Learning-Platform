@@ -58,7 +58,7 @@ export function Notes({
     const button = document.querySelector<HTMLElement>(
       `[data-source-start="${activeStart}"]`,
     );
-    button?.scrollIntoView({ behavior: "smooth", block: "center" });
+    button?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [activeStart, markdown]);
 
   const activeSpan: SourceSpan | null =
