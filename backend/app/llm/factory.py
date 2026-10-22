@@ -28,7 +28,7 @@ from typing import Any
 # handler only does a cached module lookup.
 from livekit.plugins import google as _google_plugin  # noqa: E402
 from livekit.plugins import groq as _groq_plugin  # noqa: E402
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ..config import get_settings
 from ..logging_setup import get_logger
@@ -339,7 +339,13 @@ async def complete_json(
     data = _extract_json(text)
     if schema is not None:
         try:
-            data = schema.model_validate(data).model_dump()
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                data = schema.model_validate(data).model_dump()
+            else:
+                # A list of models, or any other annotated type.
+                data = TypeAdapter(schema).dump_python(
+                    TypeAdapter(schema).validate_python(data)
+                )
         except ValidationError as exc:
             raise LLMError(
                 f"Model response did not match the required shape: {exc}",

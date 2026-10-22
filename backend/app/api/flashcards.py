@@ -29,6 +29,47 @@ FIRST_INTERVAL_DAYS = 1.0
 SECOND_INTERVAL_DAYS = 6.0
 
 
+@router.post("/lecture/{lecture_id}")
+async def generate_for_lecture(lecture_id: str, count: int = 20) -> dict[str, Any]:
+    """Generate flashcards for a lecture and store them.
+
+    Generation is idempotent: a card whose question already exists is not
+    added again, so running this twice does not duplicate anything.
+    """
+    from ..pipeline import flashcards as cards_mod
+
+    with db_mod.get_conn() as conn:
+        lecture = conn.execute(
+            "SELECT id FROM lectures WHERE id=?", (lecture_id,)
+        ).fetchone()
+        if lecture is None:
+            raise HTTPException(status_code=404, detail="No such lecture")
+
+        try:
+            cards = await cards_mod.generate_flashcards(conn, lecture_id, count=count)
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "flashcard generation failed",
+                extra={"lecture_id": lecture_id, "error": str(exc)[:200]},
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Could not generate flashcards from this lecture.",
+            ) from exc
+
+        added = cards_mod.store_flashcards(conn, lecture_id, cards)
+        total = conn.execute(
+            "SELECT COUNT(*) FROM flashcards WHERE lecture_id=?", (lecture_id,)
+        ).fetchone()[0]
+
+    return {
+        "lecture_id": lecture_id,
+        "generated": len(cards),
+        "added": added,
+        "total": total,
+    }
+
+
 class ReviewRequest(BaseModel):
     #: The grade the student gave themselves, as in SM-2.
     #: 0-2 means they got it wrong, 3-5 means they got it right.
