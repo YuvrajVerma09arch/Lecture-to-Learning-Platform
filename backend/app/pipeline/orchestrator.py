@@ -43,9 +43,12 @@ from ..db import (
     now,
     record_credit,
     replace_segments,
+    replace_topics,
+    save_topic_notes,
     set_stage,
     set_status,
     store_transcript,
+    transcript_key,
 )
 from ..logging_setup import get_logger
 from . import ingest as ingest_mod
@@ -101,8 +104,13 @@ async def run_notes_pipeline(
     progress("ingest", "validating upload")
     t0 = time.monotonic()
     media = ingest_mod.validate_upload(source_path)
-    digest = ingest_mod.content_hash(source_path)
-    work_dir = ingest_mod.work_dir_for(digest)
+    source_hash = ingest_mod.content_hash(source_path)
+    # The cache key includes the language: it decides the script the
+    # transcript comes back in.
+    digest = transcript_key(
+        source_hash, language_code=language_code, model=settings.gnani_stt_model
+    )
+    work_dir = ingest_mod.work_dir_for(source_hash)
     timings["ingest"] = time.monotonic() - t0
 
     # --- Cache check ------------------------------------------------------
@@ -113,7 +121,7 @@ async def run_notes_pipeline(
         if cached is not None:
             log.info(
                 "transcript cache hit, skipping transcription",
-                extra={"content_hash": digest[:12]},
+                extra={"cache_key": digest[:12], "language_code": language_code},
             )
             progress("transcribe", "cache hit, no transcription needed")
             timings["transcribe"] = 0.0
@@ -136,7 +144,7 @@ async def run_notes_pipeline(
                         lecture_id,
                         title,
                         source_path.name,
-                        digest,
+                        source_hash,
                         media.duration_seconds,
                         language_code,
                         STATUS_UPLOADED,
@@ -156,7 +164,7 @@ async def run_notes_pipeline(
                     lecture_id,
                     title,
                     source_path.name,
-                    digest,
+                    source_hash,
                     media.duration_seconds,
                     language_code,
                     STATUS_UPLOADED,
@@ -242,11 +250,13 @@ async def run_notes_pipeline(
         store_transcript(
             conn,
             content_hash=digest,
+            source_hash=source_hash,
             source_path=str(work.source_path),
             language_code=language_code,
             audio_seconds=media.duration_seconds,
             segments=segment_dicts,
             full_text=result.full_text,
+            model=settings.gnani_stt_model,
             gnani_job_id=result.job_id,
         )
         record_credit(
@@ -289,6 +299,14 @@ async def _continue_after_transcript(
 ) -> PipelineResult:
     """Segment, note, and merge. Safe to re-run on its own."""
     # --- Segment ----------------------------------------------------------
+    # Two levels are produced and kept:
+    #
+    #   * the *source* segments, which are the RAG corpus. They are
+    #     fine-grained -- a few hundred characters each -- because the
+    #     provider's per-minute input-token budget cannot hold a few
+    #     thousand-character topic grouping.
+    #   * the *topic* groupings, which are the unit of note generation
+    #     and the unit the merged document cites.
     progress("segment", "building topic segments")
     t0 = time.monotonic()
     with get_conn() as conn:
@@ -296,33 +314,60 @@ async def _continue_after_transcript(
         set_stage(conn, lecture_id, STAGE_SEGMENT, "running")
 
     normalised = segment_mod.normalise_segments(transcript_segments)
-    segments = segment_mod.segment_transcript(normalised)
+    topics = segment_mod.segment_transcript(normalised)
 
     with get_conn() as conn:
-        replace_segments(conn, lecture_id, [s.to_dict() for s in segments])
+        # The source segments keep their own sequence; the topic grouping
+        # is a separate view over them.
+        replace_segments(conn, lecture_id, normalised)
+        replace_topics(conn, lecture_id, [t.to_dict() for t in topics])
         set_status(conn, lecture_id, STATUS_SEGMENTED)
-        set_stage(conn, lecture_id, STAGE_SEGMENT, "done", f"{len(segments)} topic segments")
+        set_stage(
+            conn,
+            lecture_id,
+            STAGE_SEGMENT,
+            "done",
+            f"{len(normalised)} source segments, {len(topics)} topics",
+        )
         conn.commit()
     timings["segment"] = time.monotonic() - t0
 
+    # --- Index for semantic retrieval --------------------------------------
+    # Best-effort: without it the lexical stage still works.
+    progress("segment", "indexing for retrieval")
+    t0 = time.monotonic()
+    try:
+        with get_conn() as conn:
+            from ..retrieval import embeddings as emb_mod
+
+            indexed = await emb_mod.index_lecture(conn, lecture_id=lecture_id)
+    except Exception as exc:  # noqa: BLE001
+        indexed = 0
+        log.warning(
+            "could not index the lecture for semantic retrieval",
+            extra={"error": str(exc)[:200]},
+        )
+    log.info("lecture indexed", extra={"segments_indexed": indexed})
+    timings["index"] = time.monotonic() - t0
+
     # --- Notes ------------------------------------------------------------
-    progress("note", f"generating notes for {len(segments)} segments")
+    progress("note", f"generating notes for {len(topics)} topics")
     t0 = time.monotonic()
     with get_conn() as conn:
         set_status(conn, lecture_id, STATUS_NOTING)
         set_stage(conn, lecture_id, STAGE_NOTE, "running")
 
     try:
-        segment_notes = await notes_mod.generate_segment_notes(segments)
+        segment_notes = await notes_mod.generate_segment_notes(topics)
         if segment_notes:
             try:
-                document = await notes_mod.merge_notes(segments, segment_notes, title=title)
+                document = await notes_mod.merge_notes(topics, segment_notes, title=title)
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "merge failed, falling back to per-segment document",
                     extra={"error": str(exc)[:200]},
                 )
-                document = notes_mod.build_fallback_document(segments, segment_notes, title=title)
+                document = notes_mod.build_fallback_document(topics, segment_notes, title=title)
         else:
             raise notes_mod.LLMError("No segment notes could be generated")
     except Exception as exc:  # noqa: BLE001
@@ -335,6 +380,21 @@ async def _continue_after_transcript(
         ) from exc
 
     timings["note"] = time.monotonic() - t0
+
+    with get_conn() as conn:
+        save_topic_notes(
+            conn,
+            lecture_id,
+            [
+                {
+                    "segment_index": n.segment_index,
+                    "heading": n.heading,
+                    "explanation": n.explanation,
+                }
+                for n in segment_notes
+            ],
+        )
+        conn.commit()
 
     with get_conn() as conn:
         conn.execute("DELETE FROM notes WHERE lecture_id=?", (lecture_id,))

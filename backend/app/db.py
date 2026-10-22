@@ -16,6 +16,7 @@ Schema notes:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -26,6 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import get_settings
+from .logging_setup import get_logger
+
+log = get_logger(__name__)
 
 # --- Lecture lifecycle ---------------------------------------------------
 # A lecture moves forward through these; a failure parks it in a *_FAILED
@@ -48,6 +52,10 @@ SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS lectures (
     id                TEXT PRIMARY KEY,
     title             TEXT NOT NULL,
@@ -62,23 +70,37 @@ CREATE TABLE IF NOT EXISTS lectures (
     updated_at        REAL NOT NULL
 );
 
--- One row per distinct audio content. The UNIQUE hash is what makes
--- re-uploading the same file free: we find the cached transcript and skip
--- the Gnani job entirely.
+-- One row per distinct *transcription request*, not per file. The
+-- key includes the language code, because the language is not a hint:
+-- it decides the script the transcript is written in, so a Telugu
+-- lecture transcribed as `ta-IN` comes back in Tamil script. The UNIQUE
+-- key is what makes re-uploading the same file free: we find the cached
+-- transcript and skip the Gnani job entirely.
 CREATE TABLE IF NOT EXISTS transcripts (
     id             TEXT PRIMARY KEY,
     content_hash   TEXT NOT NULL UNIQUE,
+    source_hash    TEXT NOT NULL,
     source_path    TEXT NOT NULL,
     language_code  TEXT NOT NULL,
+    model          TEXT NOT NULL DEFAULT '',
     audio_seconds  REAL NOT NULL,
     segments_json  TEXT NOT NULL,
     full_text      TEXT NOT NULL,
     gnani_job_id   TEXT,
     created_at     REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_transcripts_source ON transcripts(source_hash);
 
--- RAG corpus + provenance. Every note and every answer cites segment ids
--- from this table.
+-- The RAG corpus: the source transcript segments, one per contiguous
+-- span of speech. The brief asks for these specifically: "Preserve the
+-- source segments separately because they will serve as
+-- retrieval-augmented generation (RAG) chunks."
+--
+-- They are deliberately fine-grained. A topic grouping is several
+-- thousand characters, and putting five of those in a prompt is
+-- measured to exceed the provider's per-minute input-token budget. A
+-- source segment is a few hundred characters, so a useful amount of
+-- context fits comfortably.
 CREATE TABLE IF NOT EXISTS segments (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     lecture_id    TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
@@ -88,9 +110,28 @@ CREATE TABLE IF NOT EXISTS segments (
     text          TEXT NOT NULL,
     speaker_id    INTEGER,
     visual_dependent INTEGER NOT NULL DEFAULT 0,
+    topic_seq     INTEGER,
     UNIQUE (lecture_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_segments_lecture ON segments(lecture_id, seq);
+CREATE INDEX IF NOT EXISTS idx_segments_topic ON segments(lecture_id, topic_seq);
+
+-- The topic groupings. These are the unit of note generation and the
+-- unit the merged document cites; a topic spans a range of source
+-- segments.
+CREATE TABLE IF NOT EXISTS note_topics (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    lecture_id    TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+    seq           INTEGER NOT NULL,
+    start_seconds REAL NOT NULL,
+    end_seconds   REAL NOT NULL,
+    text          TEXT NOT NULL,
+    visual_dependent INTEGER NOT NULL DEFAULT 0,
+    heading       TEXT,
+    explanation   TEXT,
+    UNIQUE (lecture_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_topics_lecture ON note_topics(lecture_id, seq);
 
 -- The merged, human-facing notes document.
 CREATE TABLE IF NOT EXISTS notes (
@@ -181,22 +222,91 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 @contextmanager
 def get_conn() -> Iterator[sqlite3.Connection]:
-    """A connection with the schema ensured. Used for migrations and CLI tools."""
+    """A connection with the schema ensured and migrated."""
     settings = get_settings()
     conn = _connect(settings.db_path)
     try:
-        conn.executescript(SCHEMA)
-        conn.commit()
+        _ensure_schema(conn)
         yield conn
         conn.commit()
     finally:
         conn.close()
 
 
+#: Bump this when the derived tables change shape.
+#:
+#: A schema change drops and rebuilds the *derived* tables -- segments,
+#: topics, notes, embeddings -- but never the ``transcripts`` table.
+#: The transcript is the expensive artefact: it cost a Gnani job and
+#: real credits to produce, and everything downstream can be rebuilt
+#: from it for free. Losing it to a schema change would be the worst
+#: possible outcome.
+SCHEMA_VERSION = 2
+
+#: Tables that can be rebuilt from a transcript.
+DERIVED_TABLES = (
+    "segment_embeddings",
+    "note_topics",
+    "segments",
+    "notes",
+    "flashcard_reviews",
+    "flashcards",
+    "stage_state",
+)
+
+
 def init_db() -> None:
-    """Create the schema. Idempotent."""
+    """Create or migrate the schema. Idempotent."""
     with get_conn() as conn:
-        conn.executescript(SCHEMA)
+        conn.commit()
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    """Bring the database up to the current schema version.
+
+    The order matters. The derived tables have to be dropped *before*
+    the schema script runs, because the script creates indexes over
+    columns that the old tables do not have, and SQLite would refuse.
+    """
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+    )
+    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    current = int(row["version"]) if row else 0
+
+    if current > SCHEMA_VERSION:
+        # Written by a newer build. Leave it alone rather than destroying
+        # data we do not understand.
+        log.warning(
+            "database schema is newer than this build",
+            extra={"db_version": current, "build_version": SCHEMA_VERSION},
+        )
+        return
+
+    if current != SCHEMA_VERSION:
+        # A database with no version row but with the derived tables in it
+        # was written by a build from before versioning existed. Its
+        # tables have the old shape, so they have to go too.
+        stale = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='segments'"
+        ).fetchone()[0]
+        if current > 0 or stale:
+            log.info(
+                "rebuilding the derived tables for the new schema",
+                extra={"from_version": current, "to_version": SCHEMA_VERSION},
+            )
+            # The FTS index is an external-content table over `segments`,
+            # so it and its triggers go first.
+            for trigger in ("segments_ai", "segments_ad", "segments_au"):
+                conn.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            conn.execute("DROP TABLE IF EXISTS segments_fts")
+            for table in DERIVED_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
+
+    conn.executescript(SCHEMA)
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+    conn.commit()
 
 
 def new_id(prefix: str) -> str:
@@ -244,7 +354,27 @@ def get_stage_states(conn: sqlite3.Connection, lecture_id: str) -> dict[str, dic
     return {r["stage"]: {"status": r["status"], "detail": r["detail"]} for r in rows}
 
 
+def transcript_key(
+    source_hash: str,
+    *,
+    language_code: str,
+    model: str = "",
+) -> str:
+    """The cache key for a transcription.
+
+    It includes the language code and the model, not just the file.
+    That is not a nicety: the language code decides the script the
+    transcript comes back in, so a Telugu lecture transcribed as
+    ``ta-IN`` is a *different* transcript from the same audio
+    transcribed as ``te-IN``. Caching on the file alone would serve
+    the wrong script.
+    """
+    raw = f"{source_hash}|{language_code}|{model}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def cached_transcript(conn: sqlite3.Connection, content_hash: str) -> sqlite3.Row | None:
+    """Find a cached transcript by its full cache key."""
     return conn.execute(
         "SELECT * FROM transcripts WHERE content_hash=?", (content_hash,)
     ).fetchone()
@@ -254,24 +384,28 @@ def store_transcript(
     conn: sqlite3.Connection,
     *,
     content_hash: str,
+    source_hash: str,
     source_path: str,
     language_code: str,
     audio_seconds: float,
     segments: list[dict[str, Any]],
     full_text: str,
+    model: str = "",
     gnani_job_id: str | None = None,
 ) -> str:
     transcript_id = new_id("tr")
     conn.execute(
         """INSERT INTO transcripts
-             (id, content_hash, source_path, language_code, audio_seconds,
-              segments_json, full_text, gnani_job_id, created_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+             (id, content_hash, source_hash, source_path, language_code, model,
+              audio_seconds, segments_json, full_text, gnani_job_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         (
             transcript_id,
             content_hash,
+            source_hash,
             source_path,
             language_code,
+            model,
             audio_seconds,
             json.dumps(segments, ensure_ascii=False),
             full_text,
@@ -287,13 +421,14 @@ def replace_segments(
     lecture_id: str,
     segments: list[dict[str, Any]],
 ) -> int:
-    """Replace a lecture's segments. Idempotent, so a re-run is safe."""
+    """Replace a lecture's source segments. Idempotent, so a re-run is safe."""
     conn.execute("DELETE FROM segments WHERE lecture_id=?", (lecture_id,))
     for seq, seg in enumerate(segments):
         conn.execute(
             """INSERT INTO segments
-                 (lecture_id, seq, start_seconds, end_seconds, text, speaker_id, visual_dependent)
-               VALUES (?,?,?,?,?,?,?)""",
+                 (lecture_id, seq, start_seconds, end_seconds, text, speaker_id,
+                  visual_dependent, topic_seq)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 lecture_id,
                 seq,
@@ -302,9 +437,76 @@ def replace_segments(
                 seg.get("text", ""),
                 seg.get("speaker_id"),
                 1 if seg.get("visual_dependent") else 0,
+                seg.get("topic_seq"),
             ),
         )
     return len(segments)
+
+
+def replace_topics(
+    conn: sqlite3.Connection,
+    lecture_id: str,
+    topics: list[dict[str, Any]],
+) -> int:
+    """Replace a lecture's topic groupings and link the source segments.
+
+    Each topic records the range of source segments it covers, so a note
+    can always be traced back to the exact span of audio it came from.
+    """
+    conn.execute("DELETE FROM note_topics WHERE lecture_id=?", (lecture_id,))
+    conn.execute("UPDATE segments SET topic_seq=NULL WHERE lecture_id=?", (lecture_id,))
+
+    for topic_seq, topic in enumerate(topics):
+        conn.execute(
+            """INSERT INTO note_topics
+                 (lecture_id, seq, start_seconds, end_seconds, text, visual_dependent)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                lecture_id,
+                topic_seq,
+                float(topic.get("start_seconds", 0.0)),
+                float(topic.get("end_seconds", 0.0)),
+                topic.get("text", ""),
+                1 if topic.get("visual_dependent") else 0,
+            ),
+        )
+        # Link the source segments that fall inside this topic.
+        conn.execute(
+            """UPDATE segments SET topic_seq=?
+               WHERE lecture_id=? AND start_seconds >= ? AND start_seconds < ?""",
+            (
+                topic_seq,
+                lecture_id,
+                float(topic.get("start_seconds", 0.0)),
+                float(topic.get("end_seconds", 0.0)),
+            ),
+        )
+    return len(topics)
+
+
+def save_topic_notes(
+    conn: sqlite3.Connection,
+    lecture_id: str,
+    notes: list[dict[str, Any]],
+) -> None:
+    """Store the generated note for each topic."""
+    for note in notes:
+        conn.execute(
+            """UPDATE note_topics SET heading=?, explanation=?
+               WHERE lecture_id=? AND seq=?""",
+            (
+                note.get("heading", ""),
+                note.get("explanation", ""),
+                lecture_id,
+                int(note.get("segment_index", -1)),
+            ),
+        )
+
+
+def get_topics(conn: sqlite3.Connection, lecture_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM note_topics WHERE lecture_id=? ORDER BY seq", (lecture_id,)
+    ).fetchall()
 
 
 def record_credit(

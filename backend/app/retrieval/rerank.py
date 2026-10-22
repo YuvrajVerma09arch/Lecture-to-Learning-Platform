@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..llm.factory import LLMError, complete_json
+from ..llm.factory import ErrorKind, LLMError, complete_json
 from ..logging_setup import get_logger
 from .fts import RetrievedSegment, format_context
 
@@ -30,6 +30,10 @@ log = get_logger(__name__)
 
 # Delay between a failed model call and the next attempt.
 RETRY_DELAY_SECONDS = 0.5
+
+# Pause before retrying a rate-limited or unavailable call. The budget is
+# per minute, so the retry has to land in a later window.
+RATE_LIMIT_RETRY_SECONDS = 10.0
 
 class GroundedAnswerPayload(BaseModel):
     """The structured shape the model must return for a grounded answer."""
@@ -92,23 +96,46 @@ def _build_prompt(question: str, segments: list[RetrievedSegment]) -> str:
 def _validate(
     data: dict[str, Any], segments: list[RetrievedSegment]
 ) -> list[str]:
-    """Reject answers that cite segments that do not exist."""
+    """Reject answers that cite excerpts which were not provided.
+
+    The model cites the *excerpt number* -- the ``[1]``, ``[2]`` labels
+    in the prompt -- not the source segment's sequence number. Validating
+    one against the other rejects correct answers, so the excerpt
+    numbering is what a citation is checked against.
+    """
     problems: list[str] = []
     if not isinstance(data, dict):
         return ["model did not return a JSON object"]
     cited = data.get("cited_segments") or []
-    valid = {s.seq for s in segments}
+    valid = {s.excerpt_index for s in segments if s.excerpt_index is not None}
     for c in cited:
         try:
-            seq = int(c)
+            index = int(c)
         except (TypeError, ValueError):
-            problems.append(f"cited segment {c!r} is not an integer")
+            problems.append(f"cited excerpt {c!r} is not an integer")
             continue
-        if seq not in valid:
-            problems.append(f"cited segment {seq} does not exist in the excerpts")
+        if index not in valid:
+            problems.append(f"cited excerpt {index} was not in the excerpts")
     if data.get("covered") and not cited:
         problems.append("answer claims coverage but cites nothing")
     return problems
+
+
+def cited_source_segments(
+    cited: list[int], segments: list[RetrievedSegment]
+) -> list[RetrievedSegment]:
+    """Map the excerpt numbers the model cited back to source segments."""
+    by_excerpt = {s.excerpt_index: s for s in segments if s.excerpt_index is not None}
+    out: list[RetrievedSegment] = []
+    for c in cited:
+        try:
+            index = int(c)
+        except (TypeError, ValueError):
+            continue
+        seg = by_excerpt.get(index)
+        if seg is not None:
+            out.append(seg)
+    return out
 
 
 async def answer_grounded(
@@ -149,8 +176,17 @@ async def answer_grounded(
             )
             data = reply.data or {}
         except LLMError as exc:
+            if not exc.retryable:
+                raise
             last_error = str(exc)
-            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+            # The provider says how long to wait, and for a per-minute
+            # token budget that is the only correct answer.
+            delay = RETRY_DELAY_SECONDS * (attempt + 1)
+            if exc.kind in (ErrorKind.RATE_LIMIT, ErrorKind.SERVER):
+                delay = RATE_LIMIT_RETRY_SECONDS * (2**attempt)
+            if exc.retry_after_seconds:
+                delay = max(delay, exc.retry_after_seconds + 1.0)
+            await asyncio.sleep(delay)
             continue
 
         problems = _validate(data, segments)
@@ -172,10 +208,14 @@ async def answer_grounded(
             last_error = "empty answer"
             continue
 
+        cited = [int(c) for c in (data.get("cited_segments") or [])]
+        source_segments = cited_source_segments(cited, segments)
         return GroundedAnswer(
             covered=covered,
             answer=answer_text,
-            cited_segments=[int(c) for c in (data.get("cited_segments") or [])],
+            # The source sequence numbers, not the excerpt numbers: these
+            # point at the audio.
+            cited_segments=[s.seq for s in source_segments],
             confidence=float(data.get("confidence") or 0.0),
             note=str(data.get("note") or "").strip(),
             retrieved=segments,

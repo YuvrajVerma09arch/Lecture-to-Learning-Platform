@@ -22,6 +22,12 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+# The LiveKit plugins must be imported on the main thread: they register
+# themselves at import time, and the registration is rejected from a
+# worker thread. Importing them here, at module load, means a request
+# handler only does a cached module lookup.
+from livekit.plugins import google as _google_plugin  # noqa: E402
+from livekit.plugins import groq as _groq_plugin  # noqa: E402
 from pydantic import BaseModel, ValidationError
 
 from ..config import get_settings
@@ -217,11 +223,9 @@ def notes_llm() -> Any:
     if not settings.has_google():
         raise LLMError("GOOGLE_API_KEY is not set. Add it to your .env file.")
 
-    from livekit.plugins import google
-
     model = settings.llm_model_notes
     log.info("notes llm selected", extra={"model": model, "provider": "google"})
-    return google.LLM(model=model, api_key=settings.google_api_key)
+    return _google_plugin.LLM(model=model, api_key=settings.google_api_key)
 
 
 def notes_segments_llm() -> Any:
@@ -234,11 +238,9 @@ def notes_segments_llm() -> Any:
     if not settings.has_google():
         raise LLMError("GOOGLE_API_KEY is not set. Add it to your .env file.")
 
-    from livekit.plugins import google
-
     model = settings.llm_model_notes_segments
     log.info("notes segment llm selected", extra={"model": model, "provider": "google"})
-    return google.LLM(model=model, api_key=settings.google_api_key)
+    return _google_plugin.LLM(model=model, api_key=settings.google_api_key)
 
 
 def chat_llm() -> Any:
@@ -252,11 +254,9 @@ def chat_llm() -> Any:
     if not settings.has_groq():
         raise LLMError("GROQ_API_KEY is not set. Add it to your .env file.")
 
-    from livekit.plugins import groq
-
     model = settings.llm_model_chat
     log.info("chat llm selected", extra={"model": model, "provider": "groq"})
-    return groq.LLM(model=model, api_key=settings.groq_api_key)
+    return _groq_plugin.LLM(model=model, api_key=settings.groq_api_key)
 
 
 def notes_llm_chain(*, segment: bool = False) -> list[Any]:
@@ -276,20 +276,16 @@ def notes_llm_chain(*, segment: bool = False) -> list[Any]:
     chain: list[Any] = []
 
     if settings.has_google():
-        from livekit.plugins import google
-
         model = (
             settings.llm_model_notes_segments if segment else settings.llm_model_notes
         )
-        chain.append(google.LLM(model=model, api_key=settings.google_api_key))
+        chain.append(_google_plugin.LLM(model=model, api_key=settings.google_api_key))
         log.info("notes llm chain", extra={"provider": "google", "model": model, "role": "primary"})
 
     if settings.has_groq():
-        from livekit.plugins import groq
-
         # The fallback reuses the conversational model: it is fast, streams
         # cleanly and handles Indic text.
-        chain.append(groq.LLM(model=settings.llm_model_chat, api_key=settings.groq_api_key))
+        chain.append(_groq_plugin.LLM(model=settings.llm_model_chat, api_key=settings.groq_api_key))
         log.info(
             "notes llm chain",
             extra={"provider": "groq", "model": settings.llm_model_chat, "role": "fallback"},

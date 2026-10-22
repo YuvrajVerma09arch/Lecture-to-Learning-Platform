@@ -167,7 +167,7 @@ class TestGroundedAnswering:
                 {
                     "covered": True,
                     "answer": "It carries raw bits over the wire.",
-                    "cited_segments": [0],
+                    "cited_segments": [1],
                     "confidence": 0.9,
                 }
             ]
@@ -175,6 +175,8 @@ class TestGroundedAnswering:
         result = await rerank.answer_grounded("what does the physical layer do?", self._segments(), llm=llm)
         assert result.covered is True
         assert "raw bits" in result.answer
+        # The answer reports the *source* segment number, not the excerpt
+        # number the model cited.
         assert result.cited_segments == [0]
 
     async def test_abstains_without_calling_the_model(self):
@@ -196,7 +198,7 @@ class TestGroundedAnswering:
                 {
                     "covered": True,
                     "answer": "An answer.",
-                    "cited_segments": [0],
+                    "cited_segments": [1],
                     "confidence": 0.9,
                 },
             ]

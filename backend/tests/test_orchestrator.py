@@ -129,9 +129,10 @@ class TestFullPipeline:
             assert lecture["status"] == "ready"
             assert lecture["failed_stage"] is None
 
-            # The transcript is stored.
+            # The transcript is stored, keyed by the cache key (the file
+            # hash plus the language and model).
             transcript = conn.execute(
-                "SELECT * FROM transcripts WHERE content_hash=?", (lecture["content_hash"],)
+                "SELECT * FROM transcripts WHERE source_hash=?", (lecture["content_hash"],)
             ).fetchone()
             assert transcript is not None
             assert transcript["gnani_job_id"] == "fake-job"
