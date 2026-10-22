@@ -8,16 +8,23 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  LocalTrack,
   Room,
   RoomEvent,
   Track,
+  type LocalTrack,
   type RemoteTrack,
   type TranscriptionSegment,
 } from "livekit-client";
 import { api } from "../api";
 import { createLevelMeter, type LevelMeter } from "../lib/audio";
-import { parseMessage, type Speaker } from "../lib/transcript";
+import { classifyError, type RoomError } from "../lib/roomErrors";
+import {
+  parseActivity,
+  parseMessage,
+  type RoomActivity,
+  type Speaker,
+} from "../lib/transcript";
+import { useRoomTranscript } from "./useRoomTranscript";
 
 export type RoomStatus =
   | "idle"
@@ -26,31 +33,19 @@ export type RoomStatus =
   | "reconnecting"
   | "error";
 
-export type ErrorKind = "permission" | "network" | "unavailable" | "unknown";
-
-export interface RoomError {
-  kind: ErrorKind;
-  message: string;
-  detail?: string;
-}
-
-export interface TranscriptEntry {
-  id: string;
-  speaker: Speaker;
-  text: string;
-  final: boolean;
-  at: number;
-}
-
 export interface LiveKitRoom {
   status: RoomStatus;
   error: RoomError | null;
-  entries: TranscriptEntry[];
+  entries: ReturnType<typeof useRoomTranscript>["entries"];
   micEnabled: boolean;
   agentPresent: boolean;
   agentSpeaking: boolean;
   studentSpeaking: boolean;
   interrupted: boolean;
+  /** The tutor has the floor and is composing an answer. */
+  thinking: boolean;
+  /** The activity the tutor announced for itself, if it announced one. */
+  announced: RoomActivity | null;
   inputMeter: LevelMeter | null;
   outputMeter: LevelMeter | null;
   start: () => Promise<void>;
@@ -59,70 +54,17 @@ export interface LiveKitRoom {
   dismissError: () => void;
 }
 
-function classifyError(error: unknown): RoomError {
-  const name = error instanceof Error ? error.name : "";
-  const message = error instanceof Error ? error.message : String(error);
-  const lower = message.toLowerCase();
-
-  if (
-    name === "NotAllowedError" ||
-    name === "PermissionDeniedError" ||
-    lower.includes("permission denied") ||
-    lower.includes("not allowed")
-  ) {
-    return {
-      kind: "permission",
-      message: "Microphone access was refused. Allow it in the browser to speak to the tutor.",
-      detail: message,
-    };
-  }
-  if (
-    name === "NotFoundError" ||
-    lower.includes("no device") ||
-    lower.includes("notfounderror")
-  ) {
-    return {
-      kind: "unavailable",
-      message: "No microphone was found on this device. Use the text box to ask instead.",
-      detail: message,
-    };
-  }
-  if (
-    lower.includes("failed to fetch") ||
-    lower.includes("network") ||
-    lower.includes("websocket") ||
-    lower.includes("timed out") ||
-    lower.includes("connection")
-  ) {
-    return {
-      kind: "network",
-      message: "The connection to the tutor dropped. Check your network and try again.",
-      detail: message,
-    };
-  }
-  if (lower.includes("livekit is not configured") || lower.includes("503")) {
-    return {
-      kind: "unavailable",
-      message: "Voice chat is not configured on this server. Use the text box to ask instead.",
-      detail: message,
-    };
-  }
-  return {
-    kind: "unknown",
-    message: "The voice room could not be started.",
-    detail: message,
-  };
-}
-
 export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
   const [status, setStatus] = useState<RoomStatus>("idle");
   const [error, setError] = useState<RoomError | null>(null);
-  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const { entries, push, clear } = useRoomTranscript();
   const [micEnabled, setMicEnabled] = useState(false);
   const [agentPresent, setAgentPresent] = useState(false);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const [studentSpeaking, setStudentSpeaking] = useState(false);
   const [interrupted, setInterrupted] = useState(false);
+  const [thinking, setThinking] = useState(false);
+  const [announced, setAnnounced] = useState<RoomActivity | null>(null);
 
   const roomRef = useRef<Room | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -130,52 +72,26 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
   const outputMeterRef = useRef<LevelMeter | null>(null);
   const [inputMeter, setInputMeter] = useState<LevelMeter | null>(null);
   const [outputMeter, setOutputMeter] = useState<LevelMeter | null>(null);
+  /** Set while the room is being closed on purpose, so a clean stop is
+   * not reported as a failure. */
+  const closingRef = useRef(false);
   const speakingRef = useRef({ agent: false, student: false });
 
-  const pushEntry = useCallback((speaker: Speaker, text: string, final: boolean) => {
-    const clean = text.trim();
-    if (!clean) return;
-    setEntries((current) => {
-      const last = current[current.length - 1];
-      if (last && last.speaker === speaker && !last.final) {
-        // A partial transcript that is still being updated.
-        return [
-          ...current.slice(0, -1),
-          { ...last, text: clean, final, at: Date.now() },
-        ];
-      }
-      if (last && last.speaker === speaker && last.final && last.text === clean) {
-        return current;
-      }
-      return [
-        ...current,
-        {
-          id: `${Date.now()}-${current.length}`,
-          speaker,
-          text: clean,
-          final,
-          at: Date.now(),
-        },
-      ];
-    });
-  }, []);
-
-  const handleTranscription = useCallback(
-    (segments: TranscriptionSegment[], participantIdentity: string | undefined, localIdentity: string) => {
-      for (const segment of segments) {
-        const speaker: Speaker =
-          participantIdentity && participantIdentity === localIdentity
-            ? "student"
-            : "tutor";
-        pushEntry(speaker, segment.text, segment.final !== false);
+  const pushEntry = useCallback(
+    (speaker: Speaker, text: string, final: boolean) => {
+      push(speaker, text, final);
+      if (speaker === "tutor") {
+        setThinking(false);
+        setAnnounced(null);
       }
     },
-    [pushEntry],
+    [push],
   );
 
   const teardown = useCallback(async () => {
     const room = roomRef.current;
     roomRef.current = null;
+    closingRef.current = true;
     if (room) {
       try {
         await room.disconnect();
@@ -197,31 +113,58 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
     setAgentPresent(false);
     setAgentSpeaking(false);
     setStudentSpeaking(false);
+    setThinking(false);
+    setAnnounced(null);
     setMicEnabled(false);
+  }, []);
+
+  const meterFor = useCallback((stream: MediaStream): LevelMeter | null => {
+    const context = audioContextRef.current ?? new AudioContext();
+    audioContextRef.current = context;
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+    }
+    return createLevelMeter(stream, context);
   }, []);
 
   const start = useCallback(async () => {
     if (!lectureId || roomRef.current) return;
+    closingRef.current = false;
     setError(null);
     setStatus("connecting");
     setInterrupted(false);
-    setEntries([]);
+    setThinking(false);
+    setAnnounced(null);
+    clear();
 
     try {
       const token = await api.livekitToken(lectureId, "Student");
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 
-      room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
-        handleTranscription(
-          segments,
-          participant?.identity,
-          room.localParticipant.identity,
-        );
-      });
+      room.on(
+        RoomEvent.TranscriptionReceived,
+        (segments: TranscriptionSegment[], participant) => {
+          const local = room.localParticipant.identity;
+          for (const segment of segments) {
+            const speaker: Speaker =
+              participant?.identity && participant.identity === local
+                ? "student"
+                : "tutor";
+            pushEntry(speaker, segment.text, segment.final !== false);
+          }
+        },
+      );
 
       room.on(RoomEvent.DataReceived, (payload, participant) => {
         const raw = new TextDecoder().decode(payload);
+        const activity = parseActivity(raw);
+        if (activity) {
+          setAnnounced(activity);
+          if (activity === "thinking") setThinking(true);
+          if (activity === "speaking") setThinking(false);
+          return;
+        }
         const parsed = parseMessage(
           raw,
           participant?.identity === room.localParticipant.identity
@@ -242,12 +185,16 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       });
 
       room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-        const localId = room.localParticipant.identity;
-        const student = speakers.some((p) => p.identity === localId);
-        const agent = speakers.some((p) => p.identity !== localId);
+        const local = room.localParticipant.identity;
+        const student = speakers.some((p) => p.identity === local);
+        const agent = speakers.some((p) => p.identity !== local);
         const previous = speakingRef.current;
         if (student && previous.agent) setInterrupted(true);
         if (!agent && previous.agent) setInterrupted(false);
+        // The student stopped talking and the tutor has not started: the
+        // tutor is working on the answer.
+        if (!student && previous.student && !agent) setThinking(true);
+        if (agent) setThinking(false);
         speakingRef.current = { agent, student };
         setStudentSpeaking(student);
         setAgentSpeaking(agent);
@@ -263,10 +210,7 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
         if (track.kind !== Track.Kind.Audio) return;
         setAgentPresent(true);
         try {
-          const source = track.mediaStreamTrack;
-          const context = audioContextRef.current ?? new AudioContext();
-          audioContextRef.current = context;
-          const meter = createLevelMeter(new MediaStream([source]), context);
+          const meter = meterFor(new MediaStream([track.mediaStreamTrack]));
           if (meter) {
             outputMeterRef.current?.dispose();
             outputMeterRef.current = meter;
@@ -280,7 +224,8 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       room.on(RoomEvent.Reconnecting, () => setStatus("reconnecting"));
       room.on(RoomEvent.Reconnected, () => setStatus("connected"));
       room.on(RoomEvent.Disconnected, () => {
-        setStatus((current) => (current === "idle" ? current : "error"));
+        if (closingRef.current) return;
+        setStatus("error");
         setError({
           kind: "network",
           message: "The voice room closed before the answer finished.",
@@ -298,12 +243,10 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       const publication = room.localParticipant.getTrackPublication(
         Track.Source.Microphone,
       );
-      const track = publication?.track as LocalTrack | undefined;
-      const source = track?.mediaStreamTrack;
+      const source = (publication?.track as LocalTrack | undefined)
+        ?.mediaStreamTrack;
       if (source) {
-        const context = audioContextRef.current ?? new AudioContext();
-        audioContextRef.current = context;
-        const meter = createLevelMeter(new MediaStream([source]), context);
+        const meter = meterFor(new MediaStream([source]));
         if (meter) {
           inputMeterRef.current = meter;
           setInputMeter(meter);
@@ -314,7 +257,7 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       setError(classifyError(caught));
       setStatus("error");
     }
-  }, [lectureId, pushEntry, handleTranscription, teardown]);
+  }, [lectureId, pushEntry, clear, meterFor, teardown]);
 
   const stop = useCallback(async () => {
     await teardown();
@@ -350,6 +293,8 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
     agentSpeaking,
     studentSpeaking,
     interrupted,
+    thinking,
+    announced,
     inputMeter,
     outputMeter,
     start,

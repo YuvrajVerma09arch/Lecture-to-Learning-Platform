@@ -53,7 +53,9 @@ export function App() {
       <AppHeader
         currentPath={path}
         items={NAV}
-        onNavigate={(target) => navigate(target, { lecture: selectedId ?? "" })}
+        onNavigate={(target) =>
+          navigate(target, selectedId ? { lecture: selectedId } : undefined)
+        }
       />
       <LectureBar
         lectures={list}

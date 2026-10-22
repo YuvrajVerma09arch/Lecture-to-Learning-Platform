@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAsync } from "../hooks/useAsync";
-import { extractHeadings, extractSourceSpans, type SourceSpan } from "../lib/markdown";
+import { extractHeadings, extractSourceSpans, findSpanForTime, type SourceSpan } from "../lib/markdown";
 import { formatTime } from "../lib/format";
 import type { Route } from "../lib/router";
 import type { Lecture } from "../types";
@@ -32,7 +32,8 @@ export function Notes({
     [lectureId],
     Boolean(lectureId),
   );
-  const [activeStart, setActiveStart] = useState<number | null>(null);
+  const [openStart, setOpenStart] = useState<number | null>(null);
+  const [requestedStart, setRequestedStart] = useState<number | null>(null);
 
   const lecture = lectures.find((item) => item.id === lectureId) ?? null;
   const markdown = notes.data?.document ?? "";
@@ -50,22 +51,30 @@ export function Notes({
     const requested = route.params.get("source");
     if (requested === null) return;
     const seconds = Number(requested);
-    if (Number.isFinite(seconds)) setActiveStart(seconds);
+    if (Number.isFinite(seconds)) setRequestedStart(seconds);
   }, [route.params]);
 
+  // The document links point at a section, the chat links at a segment,
+  // so the section that covers the moment is the one to open.
+  const requestedSpan = useMemo(
+    () => (requestedStart === null ? null : findSpanForTime(spans, requestedStart)),
+    [spans, requestedStart],
+  );
+
   useEffect(() => {
-    if (activeStart === null) return;
+    if (!requestedSpan) return;
+    setOpenStart(requestedSpan.start);
     const button = document.querySelector<HTMLElement>(
-      `[data-source-start="${activeStart}"]`,
+      `[data-source-start="${requestedSpan.start}"]`,
     );
     button?.scrollIntoView?.({ behavior: "smooth", block: "center" });
-  }, [activeStart, markdown]);
+  }, [requestedSpan]);
 
   const activeSpan: SourceSpan | null =
-    spans.find((span) => span.start === activeStart) ?? null;
+    spans.find((span) => span.start === openStart) ?? null;
 
   const toggleSource = (span: SourceSpan) => {
-    setActiveStart((current) => (current === span.start ? null : span.start));
+    setOpenStart((current) => (current === span.start ? null : span.start));
   };
 
   if (!lectureId) {

@@ -47,6 +47,11 @@ export function createLevelMeter(
     const buffer = new Uint8Array(analyser.fftSize);
     let disposed = false;
 
+    // A context created outside a user gesture starts suspended, and a
+    // suspended context reports silence. The page has sticky activation
+    // by the time a student presses "Start voice", so resuming works.
+    if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
+
     return {
       getLevel: () => {
         if (disposed) return 0;

@@ -41,6 +41,32 @@ function textOf(value: Record<string, unknown>): string {
   return "";
 }
 
+/** What the tutor says it is doing, when it says so itself. */
+export type RoomActivity = "listening" | "thinking" | "speaking";
+
+/**
+ * Read an activity hint out of a data message.
+ *
+ * The agent may publish `{"type": "agent_state", "state": "thinking"}`.
+ * When it does, that is the most accurate thing on screen, so it is
+ * preferred over the state inferred from who is speaking.
+ */
+export function parseActivity(raw: string): RoomActivity | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const state =
+      typeof parsed.state === "string" ? parsed.state.toLowerCase() : "";
+    if (state === "listening" || state === "thinking" || state === "speaking") {
+      return state;
+    }
+  } catch {
+    // Not a JSON message, so it carries no activity hint.
+  }
+  return null;
+}
+
 /**
  * Read one message from the room. `fallback` is the speaker to assume
  * when the payload does not say who is talking.

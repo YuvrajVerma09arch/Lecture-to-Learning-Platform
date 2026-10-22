@@ -113,6 +113,37 @@ export function extractSourceSpans(markdown: string): SourceSpan[] {
 }
 
 /**
+ * The section a moment of the recording falls in.
+ *
+ * A link from the chat screen points at a transcript segment, while the
+ * document links point at the section that covers it, so the two are
+ * rarely the same instant. The section that contains the moment is the
+ * one to open; failing that, the one that starts closest before it.
+ */
+export function findSpanForTime(
+  spans: SourceSpan[],
+  seconds: number,
+): SourceSpan | null {
+  if (spans.length === 0) return null;
+
+  const exact = spans.find((span) => span.start === seconds);
+  if (exact) return exact;
+
+  const containing = spans.find(
+    (span) => seconds >= span.start && seconds <= span.end,
+  );
+  if (containing) return containing;
+
+  let nearest: SourceSpan | null = null;
+  for (const span of spans) {
+    if (span.start <= seconds && (nearest === null || span.start > nearest.start)) {
+      nearest = span;
+    }
+  }
+  return nearest ?? spans[0];
+}
+
+/**
  * True for the short code spans the notes use for equations, such as
  * `F = ma` or `E = mc^2`.
  */
