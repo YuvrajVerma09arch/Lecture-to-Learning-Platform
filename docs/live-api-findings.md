@@ -265,7 +265,55 @@ workload falls back to a provider on a different account.
 4. **Gujarati batch transcription works**, so a Gujarati lecture is
    possible. This removes a risk the documentation had created.
 
-## 5. Credit cost of this probe
+## 5. STT turn-taking configurations — MEASURED
+
+`scripts/probe_tuned_stt.py` sweeps the two knobs that decide when a
+transcript arrives and whether a pause splits the utterance. The input
+is 10 s of Hindi speech, streamed at real-time cadence, with an
+optional 0.6 s gap in the middle. "finals" is how many final
+transcripts the utterance produced: more than one means the pause split
+it. "latency" is measured from the end of the audio.
+
+| config | server min-silence | injection timeout | clean: finals / latency | pause: finals / latency |
+|---|---|---|---|---|
+| server-default | 500 ms | 0.50 s | 1 / +1.27 s | **2** (split) |
+| patient | 700 ms | 0.80 s | 1 / +2.03 s | **1** |
+| eager | 500 ms | 0.20 s | 1 / +0.98 s | **2** (split) |
+| no injection | 500 ms | — | **0 — no transcript at all** | 0 |
+
+Findings:
+
+1. **Without trailing silence there is no transcript.** The plugin on
+   its own forwards audio and stops; the server never hears the silence
+   it needs to close the segment, so nothing is ever delivered. LiveKit
+   papers over this by pushing silence when it flushes the STT at
+   turn-commit time — which is *after* the end-of-turn decision, so the
+   transcript is not available when the turn is committed.
+2. **The injection timeout and the server's min-silence must both
+   exceed the longest pause to tolerate.** At 0.5 s / 500 ms a 0.6 s
+   pause split the utterance; at 0.8 s / 700 ms it did not. The
+   injection is what causes the split in the fast configurations: the
+   injected silence pushes the server past its own threshold in the
+   middle of a sentence.
+3. **The cost of not splitting is about 750 ms of transcript latency.**
+   That is the trade the brief's "pauses before a technical term" case
+   demands.
+
+The shipped default is therefore **700 ms min-silence with a 0.8 s
+injection timeout**: one transcript in both cases, ~1.9 s after the
+student stops speaking. Re-verified live after the change: 1 final in
+the clean case, 1 final in the paused case.
+
+**Turn control is unaffected by any of this.** LiveKit's own VAD drives
+the turn lifecycle and its turn detector is audio-based, so it does not
+need partial transcripts. A split transcript is not fatal — LiveKit
+concatenates multiple final transcripts into one turn — but a turn
+committed on the first half would answer half the question, so the
+split is avoided rather than merely tolerated.
+
+---
+
+## 6. Credit cost of this probe
 
 Four batch jobs of ~5 s each plus two streaming sessions of ~10 s each, and
 one TTS call. On the reseller rate card (27 credits per audio hour) that
