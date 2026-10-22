@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     llm_model_chat: str = "llama-3.3-70b-versatile"
 
     # --- Storage ---
+    # These read DATA_DIR / DB_PATH / CACHE_DIR from the environment, so a
+    # deployment can point the app at a mounted volume, and tests can point
+    # it at a temporary directory.
     data_dir: Path = DATA_DIR
     db_path: Path = DATA_DIR / "app.sqlite3"
     cache_dir: Path = DATA_DIR / "cache"
@@ -117,10 +120,8 @@ def get_settings() -> Settings:
 
 
 def reset_settings_cache() -> None:
-    """Used by tests that patch the environment."""
+    """Drop the cached settings so the next call re-reads the environment.
+
+    Tests use this after changing an environment variable.
+    """
     get_settings.cache_clear()
-
-
-# Keep a module-level instance for convenience; it is lazily created on first
-# access so importing the package never touches the filesystem.
-settings = get_settings()

@@ -15,16 +15,19 @@ Two rules drive the design:
 
 from __future__ import annotations
 
-import json
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..llm.factory import LLMError, complete_json
+from ..llm.factory import LLMError, complete_json, parse_json_reply
 from ..logging_setup import get_logger
 from .fts import RetrievedSegment, format_context
 
 log = get_logger(__name__)
+
+# Delay between a failed model call and the next attempt.
+RETRY_DELAY_SECONDS = 0.5
 
 ANSWER_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -92,6 +95,8 @@ def _validate(
 ) -> list[str]:
     """Reject answers that cite segments that do not exist."""
     problems: list[str] = []
+    if not isinstance(data, dict):
+        return ["model did not return a JSON object"]
     cited = data.get("cited_segments") or []
     valid = {s.seq for s in segments}
     for c in cited:
@@ -143,14 +148,10 @@ async def answer_grounded(
             reply = await complete_json(
                 model, prompt=prompt, system=ANSWER_SYSTEM, schema=ANSWER_SCHEMA
             )
+            data = parse_json_reply(reply)
         except LLMError as exc:
             last_error = str(exc)
-            continue
-
-        try:
-            data = reply if isinstance(reply, dict) else json.loads(reply)
-        except (json.JSONDecodeError, TypeError) as exc:
-            last_error = f"unparseable JSON: {exc}"
+            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
             continue
 
         problems = _validate(data, segments)

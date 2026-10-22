@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
 import sys
 import tempfile
 import time
@@ -43,13 +42,11 @@ import aiohttp  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
 from app.pipeline.transcribe import GnaniBatchClient  # noqa: E402
-from scripts.probe_stt import SPEECH, VOICE, make_pcm  # noqa: E402
+from scripts.probe_stt import make_pcm  # noqa: E402
 
 
 async def run_probe(lang: str, *, chunk_seconds: float, with_diarization: bool) -> dict:
-    settings = get_settings()
     client = GnaniBatchClient()
-
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         pcm, duration = make_pcm(lang, workdir)
@@ -88,6 +85,7 @@ async def run_probe(lang: str, *, chunk_seconds: float, with_diarization: bool) 
             files = await client.get_job_files(job_id, session=session)
 
             per_file: list[dict] = []
+            payloads: list[dict] = []
             for record in files:
                 entry = {
                     "original_path": record.get("original_path"),
@@ -98,6 +96,7 @@ async def run_probe(lang: str, *, chunk_seconds: float, with_diarization: bool) 
                 url = record.get("transcript_url")
                 if url:
                     payload = await client.download_transcript(url, session=session)
+                    payloads.append(payload)
                     segs = payload.get("segments") or []
                     entry["segment_count"] = len(segs)
                     entry["first_start"] = segs[0].get("start_time") if segs else None
@@ -126,6 +125,7 @@ async def run_probe(lang: str, *, chunk_seconds: float, with_diarization: bool) 
                 len(chunk1) / bytes_per_second,
                 len(chunk2) / bytes_per_second,
             ],
+            "payloads": payloads,
         }
 
 
@@ -179,6 +179,12 @@ async def main() -> int:
     parser.add_argument("--lang", default="ta-IN", help="language_code to test")
     parser.add_argument("--chunk-seconds", type=float, default=0.0)
     parser.add_argument("--diarization", action="store_true")
+    parser.add_argument(
+        "--save-fixture",
+        type=Path,
+        default=None,
+        help="write the raw transcript payload here, for use as a test fixture",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -189,6 +195,13 @@ async def main() -> int:
     print(f"probing batch STT for language_code={args.lang} ...", file=sys.stderr)
     result = await run_probe(args.lang, chunk_seconds=args.chunk_seconds,
                              with_diarization=args.diarization)
+
+    if args.save_fixture:
+        args.save_fixture.parent.mkdir(parents=True, exist_ok=True)
+        args.save_fixture.write_text(
+            json.dumps(result["payloads"], ensure_ascii=False, indent=2)
+        )
+        print(f"wrote fixture to {args.save_fixture}", file=sys.stderr)
 
     print("\n" + "=" * 72)
     print("BATCH STT PROBE")

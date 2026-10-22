@@ -29,39 +29,101 @@ from ..logging_setup import get_logger
 log = get_logger(__name__)
 
 # --- Grounding: references to visual material -----------------------------
-# These are the phrases where a teacher points at something the audio cannot
-# carry. Matching is deliberately broad: a false positive costs a segment an
-# "unclear" marker, a false negative risks a fabricated equation.
-_VISUAL_PATTERNS = [
-    # Hindi
-    r"ये वाला", r"ये वाली", r"इस वाला", r"इस वाली", r"यह वाला", r"यह वाली",
-    r"उस वाला", r"उस वाली", r"इसमें", r"इसमे", r"नीचे दिया", r"नीचे लिखा",
-    r"ऊपर दिया", r"यहाँ दिया", r"यहाँ लिखा", r"दिखाया", r"देखिए", r"देखो",
-    r"रखा है", r"लिखा है", r"बनाया है",
-    # Gujarati
-    r"આ વાલ", r"આ વાલો", r"આ વાલી", r"એ વાલ", r"એ વાલો", r"એ વાલી",
-    r"આમાં", r"આમે", r"નીચે આપેલ", r"નીચે લખેલ", r"ઉપર આપેલ",
-    r"દેખાવ્યું", r"દેખો", r"રખેલું", r"લખેલું", r"બનાવેલું",
-    # English
-    r"\bthis (?:one|diagram|graph|equation|formula|figure|image|slide|table)\b",
-    r"\bthat (?:diagram|graph|equation|formula|figure|image|slide|table)\b",
-    r"\bas (?:shown|you can see|you can see here)\b",
-    r"\bon the (?:screen|board|slide|board here)\b",
-    r"\bhere on the (?:screen|board|slide)\b",
-    r"\bthe (?:diagram|graph|equation|formula|figure) (?:below|above|on the)\b",
-    r"\bwritten (?:here|there|on the board)\b",
-    r"\blook at (?:this|the) (?:diagram|graph|equation|figure)\b",
-    r"\bshowing (?:here|this)\b",
-]
-_VISUAL_RE = re.compile("|".join(_VISUAL_PATTERNS), re.IGNORECASE)
+#
+# The rule is deliberately asymmetric. A false positive costs a segment an
+# "unclear — needs the original visual" marker, which is a small cost. A
+# false negative lets the model invent an equation the teacher only
+# pointed at, which is the failure the brief explicitly forbids. So the
+# detector leans towards flagging.
+#
+# Three tiers, from strongest signal to weakest:
+#
+#   Tier 1 -- an explicit reference to something on a surface: "on the
+#             screen", "as shown in the diagram", "written here".
+#   Tier 2 -- the deictic construction: "ये वाला", "आ વાલો", "this one".
+#             In a lecture this almost always points at a board or slide.
+#   Tier 3 -- a locative pointer ("here", "in this", "below") next to a
+#             visual noun ("diagram", "चित्र", "સૂત્ર").
+#
+# A bare mention of a visual noun is NOT enough: a teacher who says the
+# equation out loud has provided it in the audio, and flagging that would
+# make the notes useless in a maths lecture.
 
-# A segment that only *mentions* these is not necessarily visual-dependent;
-# this second pass requires some semantic context.
-_VISUAL_CONTEXT_RE = re.compile(
-    r"(equation|formula|diagram|graph|figure|table|slide|screen|board|chart|"
-    r"image|photo|picture|animation|video)",
+# Tier 1: an explicit surface reference.
+#
+# Note on word boundaries: Python's ``\b`` is defined in terms of ``\w``,
+# which does not include Indic combining marks. A pattern like ``\bઆમાં\b``
+# therefore never matches, because the anusvara at the end is not a word
+# character. The Indic alternatives below deliberately use no boundary.
+_SURFACE_RE = re.compile(
+    r"(on|upon|over|at)\s+the\s+(screen|board|slide|wall|blackboard|chart)"
+    r"|\bas\s+(shown|you\s+can\s+see|displayed)"
+    r"|\bwritten\s+(here|there|on\s+the\s+board)"
+    r"|\blook\s+at\s+(this|that|the)"
+    r"|\bhere\s+on\s+the\b"
+    r"|\bthe\s+(diagram|graph|figure|image|table)\s+(below|above|on\s+the\s+left|on\s+the\s+right)"
+    r"|\bshowing\s+(here|this|that)\b"
+    # A demonstrative in front of a visual noun is a point at something.
+    r"|\b(this|that)\s+(diagram|graph|figure|image|slide|equation|formula|chart)\b"
+    # Hindi
+    r"|(स्क्रीन|बोर्ड|स्लाइड|पर्दे)\s+(पर|में)"
+    r"|(नीचे|ऊपर|यहाँ)\s+(दिया|दिए|लिखा|लिखे|बनाया|दिखाया|दिखाता)"
+    r"|(दिखाया|दिखाता|देखिए|देखो)"
+    r"|(रखा|लिखा|बनाया)\s+(है|हैं|था)"
+    r"|इस(में|मे|का|की|के)"
+    r"|इस\s*(चित्र|ग्राफ|आकृति|सूत्र|समीकरण|डायग्राम|पट)"
+    # Gujarati
+    r"|(સ્ક્રીન|બોર્ડ|સ્લાઇડ)\s+(પર|માં)"
+    r"|(નીચે|ઉપર|અહીં)\s+(આપેલ|આપેલું|લખેલ|લખેલું|બનાવેલ|દેખાવ્યું)"
+    r"|(દેખાવ્યું|દેખો)"
+    r"|(રખેલું|લખેલું|બનાવેલું)\s+(છે|છું|હતું)"
+    r"|આમાં"
+    r"|એમાં"
+    r"|આ\s*(ચિત્ર|ગ્રાફ|આકૃતિ|સૂત્ર|સ્લાઇડ)",
     re.IGNORECASE,
 )
+
+# Tier 2: the deictic construction, in both scripts.
+_DEICTIC_RE = re.compile(
+    r"(ये|इस|यह|उस|आ|इन|उन|एक)\s*(वाला|वाली|वाले|वालों|वालू)"
+    r"|(આ|એ|તે|તેઓ)\s*(વાલ|વાલો|વાલી|વાલું)"
+    r"|\bthis\s+one\b"
+    r"|\bthat\s+one\b"
+    r"|\bthe\s+one\s+(i|you)\s+(am|are)\s+(showing|pointing)\b",
+    re.IGNORECASE,
+)
+
+# A demonstrative directly in front of a visual noun, in any combination of
+# scripts. Teachers mix scripts freely ("इस diagram"), so the demonstrative
+# set and the noun set are combined rather than paired per language.
+_DEMONSTRATIVE_NOUN_RE = re.compile(
+    r"(\bthis\b|\bthat\b|ये|इस|यह|उस|इन|આ|એ|તે)\s*"
+    r"(diagram|graph|figure|image|slide|equation|formula|chart|"
+    r"चित्र|ग्राफ|आकृति|सूत्र|समीकरण|डायग्राम|पट|स्लाइड|"
+    r"ચિત્ર|ગ્રાફ|આકૃતિ|સૂત્ર|સ્લાઇડ)",
+    re.IGNORECASE,
+)
+
+# Tier 3: a locative pointer, used only alongside a visual noun.
+_LOCATIVE_RE = re.compile(
+    r"(\bhere\b|\bthere\b|\bbelow\b|\babove\b|\bin\s+this\b|\bin\s+that\b"
+    r"|इसमें|इसका|यहाँ|वहाँ|नीचे|ऊपर"
+    r"|અહીં|ત્યાં|નીચે|ઉપર)",
+    re.IGNORECASE,
+)
+
+# Nouns that name a visual artefact, in all three languages.
+_VISUAL_NOUN_RE = re.compile(
+    r"(diagram|graph|figure|image|picture|photo|chart|table|slide|screen|board|"
+    r"animation|video|"
+    r"चित्र|ग्राफ|आकृति|तस्वीर|सूत्र|समीकरण|पट|स्लाइड|डायग्राम"
+    r"|ચિત્ર|ગ્રાફ|આકૃતિ|તસ્વીર|સૂત્ર|સ્લાઇડ)",
+    re.IGNORECASE,
+)
+
+# An equation or formula is only visual if it is also pointed at: a teacher
+# who says it aloud has given it to us in the audio.
+_EQUATION_RE = re.compile(r"(equation|formula|समीकरण|સૂત્ર)", re.IGNORECASE)
 
 
 @dataclass
@@ -99,17 +161,36 @@ def format_timestamp(seconds: float) -> str:
 
 
 def is_visual_dependent(text: str) -> bool:
-    """True when the text refers to something only visible, not audible."""
+    """True when the text refers to something only visible, not audible.
+
+    See the tier comments above for the reasoning. The short version: we
+    would rather mark a segment as needing the original visual material
+    than let the model invent what the teacher pointed at.
+    """
     if not text:
         return False
-    if _VISUAL_RE.search(text):
-        # Require a visual noun nearby, so "this one" alone is not enough
-        # but "this equation" is.
-        if _VISUAL_CONTEXT_RE.search(text):
-            return True
-        # Hindi/Gujarati patterns already name the artefact implicitly.
-        if re.search(r"(वाला|वाली|वाले|वालीं|વાલ|વાલો|વાલી)", text, re.IGNORECASE):
-            return True
+
+    # Tier 1: an explicit reference to a surface or a pointing instruction.
+    if _SURFACE_RE.search(text):
+        return True
+
+    # A demonstrative in front of a visual noun, in any script mix.
+    if _DEMONSTRATIVE_NOUN_RE.search(text):
+        return True
+
+    # Tier 2: the deictic construction on its own.
+    if _DEICTIC_RE.search(text):
+        return True
+
+    # Tier 3: a locative pointer next to a visual noun.
+    if _LOCATIVE_RE.search(text) and _VISUAL_NOUN_RE.search(text):
+        return True
+
+    # An equation or formula named with a pointer is visual; named on its
+    # own it may have been spoken aloud, which the audio does carry.
+    if _EQUATION_RE.search(text) and _DEICTIC_RE.search(text):
+        return True
+
     return False
 
 

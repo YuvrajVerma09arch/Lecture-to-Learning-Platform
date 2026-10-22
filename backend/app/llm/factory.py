@@ -183,15 +183,8 @@ async def complete_json(
     same code path works for either workload and the provider can be swapped
     without touching the pipeline.
     """
-    from livekit.agents.llm import ChatContext
-    from livekit.agents.types import MessageContent, TextContent
 
-    chat_ctx = ChatContext(
-        messages=[
-            MessageContent(content=[TextContent(text=system)], role="system"),
-            MessageContent(content=[TextContent(text=prompt)], role="user"),
-        ]
-    )
+    chat_ctx = _build_context(system, prompt)
 
     kwargs: dict[str, Any] = {"chat_ctx": chat_ctx}
     if schema is not None:
@@ -217,6 +210,21 @@ async def complete_json(
     )
 
 
+def _build_context(system: str, prompt: str) -> Any:
+    """Build a two-message chat context.
+
+    ``ChatContext`` takes a list of ``ChatMessage`` objects, and a message's
+    content is a list of content parts, where plain text is just a string.
+    """
+    from livekit.agents.llm import ChatContext, ChatMessage
+
+    items = []
+    if system:
+        items.append(ChatMessage(role="system", content=[system]))
+    items.append(ChatMessage(role="user", content=[prompt]))
+    return ChatContext(items=items)
+
+
 async def complete_text(
     llm: Any,
     *,
@@ -225,15 +233,7 @@ async def complete_text(
     max_output_tokens: int = 4096,
 ) -> LLMReply:
     """Run one non-streaming completion and return plain text."""
-    from livekit.agents.llm import ChatContext
-    from livekit.agents.types import MessageContent, TextContent
-
-    chat_ctx = ChatContext(
-        messages=[
-            MessageContent(content=[TextContent(text=system)], role="system"),
-            MessageContent(content=[TextContent(text=prompt)], role="user"),
-        ]
-    )
+    chat_ctx = _build_context(system, prompt)
     try:
         stream = llm.chat(chat_ctx=chat_ctx)
         reply = await stream.collect()

@@ -31,12 +31,16 @@ _INLINE_SECRET = re.compile(
 
 
 class RedactingFilter(logging.Filter):
-    """Redacts sensitive values from log records.
+    """Makes log records safe to emit.
 
-    Two layers:
+    Three layers:
       1. Structured ``extra`` fields whose names look sensitive are dropped.
       2. Free-text messages are scanned for inline key=value pairs and the
          value is masked.
+      3. ``extra`` keys that collide with a built-in ``LogRecord``
+         attribute are renamed. Logging raises ``KeyError`` on a
+         collision, so a stray ``extra={"filename": ...}`` would otherwise
+         turn a log call into a crash inside a request handler.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -51,6 +55,41 @@ class RedactingFilter(logging.Filter):
         if isinstance(record.msg, str):
             record.msg = _INLINE_SECRET.sub(r"\1***redacted***", record.msg)
         return True
+
+
+_ORIGINAL_MAKE_RECORD = logging.Logger.makeRecord
+
+
+def _safe_make_record(
+    self, name, level, fn, lno, msg, args, exc_info, func=None, extra=None, sinfo=None
+):
+    """``Logger.makeRecord`` that tolerates colliding ``extra`` keys.
+
+    The standard implementation raises ``KeyError: "Attempt to overwrite
+    'filename' in LogRecord"`` when an ``extra`` key collides with a
+    built-in attribute. In a request handler that turns a log line into a
+    500, so the colliding key is moved aside under an ``x_`` prefix and the
+    data is preserved rather than dropped.
+    """
+    if extra:
+        safe = {}
+        for key, value in extra.items():
+            if key in _STANDARD_ATTRS and not key.startswith("_"):
+                key = f"x_{key}"
+            safe[key] = value
+        extra = safe
+    return _ORIGINAL_MAKE_RECORD(
+        self, name, level, fn, lno, msg, args, exc_info, func=func, extra=extra, sinfo=sinfo
+    )
+
+
+def _install_safe_make_record() -> None:
+    """Install the safe ``makeRecord`` once, at import time."""
+    if logging.Logger.makeRecord is not _safe_make_record:
+        logging.Logger.makeRecord = _safe_make_record
+
+
+_install_safe_make_record()
 
 
 _STANDARD_ATTRS = frozenset(

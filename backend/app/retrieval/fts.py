@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,18 +75,34 @@ class RetrievedSegment:
         }
 
 
+def _is_word_char(ch: str) -> bool:
+    """True for characters that belong inside a word.
+
+    This has to include combining marks. Python's ``\\w`` does not: it
+    matches ``પ`` but not the vowel sign ``ા``, so a regex-based split
+    breaks ``પાણી`` into fragments. SQLite's ``unicode61`` tokenizer keeps
+    the marks, so a query split by Python would never match the index.
+
+    Verified against real text: ``પાણી``, ``पानी``, ``बाइनरी`` and ``ટ્રી``
+    all survive as single tokens.
+    """
+    return ch.isalnum() or unicodedata.category(ch) in ("Mn", "Mc", "Me")
+
+
 def tokenize(query: str) -> list[str]:
     """Split a query into terms FTS5 can use.
 
     FTS5's query syntax treats many characters as operators, so we quote
-    each term. Devanagari and Gujarati are split on whitespace, which is
-    what unicode61 does internally anyway.
+    each term. Words are split on whitespace and stripped of punctuation,
+    which reproduces ``unicode61``'s token boundaries -- including the
+    combining marks that a plain ``\\w`` split would destroy.
     """
-    terms = re.findall(r"[\w'ऀ-ॿ]+", query, flags=re.UNICODE)
     out: list[str] = []
-    for term in terms:
-        low = term.lower()
-        if len(low) < 2 or low in _STOPWORDS:
+    for raw in re.split(r"\s+", query):
+        term = "".join(ch for ch in raw if _is_word_char(ch) or ch == "'")
+        if len(term) < 2:
+            continue
+        if term.lower() in _STOPWORDS:
             continue
         out.append(term)
     return out

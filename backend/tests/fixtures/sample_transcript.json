@@ -1,0 +1,65 @@
+[
+  {
+    "index": 0,
+    "start_seconds": 0.0,
+    "end_seconds": 5.024,
+    "text": "नमस्ते दोस्तों आज हम कंप्यूटर नेटवर्क के बारे में पढ़ लेंगे आज का विषय है",
+    "speaker_id": 1,
+    "chunk_index": 0,
+    "source_file": "chunk000.mp3"
+  },
+  {
+    "index": 1,
+    "start_seconds": 5.02,
+    "end_seconds": 10.054,
+    "text": "है ओएसआई मॉडल जो कि नेटवर्क कम्युनिकेशन के साथ स्तरों को समझाता है",
+    "speaker_id": 1,
+    "chunk_index": 1,
+    "source_file": "chunk001.mp3"
+  },
+  {
+    "index": 2,
+    "start_seconds": 10.054,
+    "end_seconds": 15.31,
+    "text": "ये वाला diagram देखिए जिसमें ऊपर से नीचे data flow दिखाया गया है",
+    "speaker_id": 1,
+    "chunk_index": 1,
+    "source_file": "chunk001.mp3"
+  },
+  {
+    "index": 3,
+    "start_seconds": 15.31,
+    "end_seconds": 21.9,
+    "text": "पहला layer physical layer है जो raw bits को wire पर भेजता है",
+    "speaker_id": 1,
+    "chunk_index": 1,
+    "source_file": "chunk001.mp3"
+  },
+  {
+    "index": 4,
+    "start_seconds": 21.9,
+    "end_seconds": 27.4,
+    "text": "दूसरा layer data link layer है जो framing और error detection करता है",
+    "speaker_id": 1,
+    "chunk_index": 2,
+    "source_file": "chunk002.mp3"
+  },
+  {
+    "index": 5,
+    "start_seconds": 27.4,
+    "end_seconds": 33.1,
+    "text": "तीसरा layer network layer है जो routing और logical addressing करता है",
+    "speaker_id": 1,
+    "chunk_index": 2,
+    "source_file": "chunk002.mp3"
+  },
+  {
+    "index": 6,
+    "start_seconds": 33.1,
+    "end_seconds": 38.8,
+    "text": "transport layer end to end delivery की guarantee करती है",
+    "speaker_id": 1,
+    "chunk_index": 2,
+    "source_file": "chunk002.mp3"
+  }
+]

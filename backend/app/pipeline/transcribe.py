@@ -22,6 +22,7 @@ import asyncio
 import json
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -138,6 +139,7 @@ class GnaniBatchClient:
         *,
         session: aiohttp.ClientSession,
         max_attempts: int = 4,
+        body_factory: Callable[[], dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> tuple[int, Any]:
         """One HTTP request with bounded retries and exponential backoff.
@@ -145,6 +147,11 @@ class GnaniBatchClient:
         Only retryable statuses are retried. A 4xx validation error is
         returned to the caller immediately -- retrying it would just burn
         time and, for a billable operation, risk a duplicate charge.
+
+        ``body_factory`` builds a fresh request body for each attempt. That
+        matters for uploads: a multipart body holds open file handles and
+        is consumed on the first attempt, so retrying the *same* body would
+        send an empty file. The factory reopens the files instead.
         """
         settings = get_settings()
         url = f"{self.base_url}{path}"
@@ -156,9 +163,12 @@ class GnaniBatchClient:
         # Every call to this API is authenticated with the same header.
         headers = {**self._headers(), **(kwargs.pop("headers", None) or {})}
         for attempt in range(max_attempts):
+            body_kwargs = dict(kwargs)
+            if body_factory is not None:
+                body_kwargs.update(body_factory())
             try:
                 async with session.request(
-                    method, url, timeout=timeout, headers=headers, **kwargs
+                    method, url, timeout=timeout, headers=headers, **body_kwargs
                 ) as resp:
                     if resp.status in RETRYABLE_STATUS:
                         body = await resp.text()
@@ -219,22 +229,35 @@ class GnaniBatchClient:
             bias_list=bias_list,
         )
 
-        form = aiohttp.FormData()
-        form.add_field("config", config, content_type="application/json")
-        for path in files:
-            form.add_field(
-                "files", path.open("rb"), filename=path.name, content_type="audio/mpeg"
-            )
+        opened: list[Any] = []
+
+        def build_form() -> dict[str, Any]:
+            """Build a fresh multipart body.
+
+            A new body per attempt is required: the previous one has been
+            consumed, and reusing it would upload empty files.
+            """
+            form = aiohttp.FormData()
+            form.add_field("config", config, content_type="application/json")
+            for path in files:
+                handle = path.open("rb")
+                opened.append(handle)
+                form.add_field(
+                    "files", handle, filename=path.name, content_type="audio/mpeg"
+                )
+            return {"data": form}
 
         try:
             _, body = await self._request(
-                "POST", "/stt/v3/batch/jobs", session=session, data=form
+                "POST", "/stt/v3/batch/jobs", session=session, body_factory=build_form
             )
         finally:
-            # Close the handles FormData opened for us.
-            for part in form._fields:
-                if hasattr(part[0], "close"):
-                    part[0].close()
+            # Close every handle FormData opened for us.
+            for handle in opened:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
 
         job_id = body.get("job_id")
         if not job_id:
@@ -419,13 +442,13 @@ class GnaniBatchClient:
                 # trip.
                 record = file_records[len(segments) and 0 or 0] if file_records else None
             if record is None:
-                log.warning("no transcript record for chunk", extra={"filename": path.name})
+                log.warning("no transcript record for chunk", extra={"source_name": path.name})
                 continue
             if record.get("status") != "COMPLETED":
                 log.warning(
                     "chunk did not transcribe successfully",
                     extra={
-                        "filename": path.name,
+                        "source_name": path.name,
                         "status": record.get("status"),
                         "error": str(record.get("error_message"))[:200],
                     },

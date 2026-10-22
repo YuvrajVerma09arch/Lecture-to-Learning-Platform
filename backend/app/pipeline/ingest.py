@@ -40,6 +40,9 @@ GNANI_SUPPORTED_SUFFIXES = {
     ".wav", ".mp3", ".mp4", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".webm", ".amr",
 }
 
+# Gnani's documented limit on files per batch job.
+MAX_FILES_PER_JOB = 100
+
 # Magic-byte signatures for container sniffing. We do not rely on the
 # filename extension alone.
 _MAGIC = [
@@ -203,7 +206,7 @@ def validate_upload(path: Path) -> MediaInfo:
     log.info(
         "upload validated",
         extra={
-            "filename": path.name,
+            "source_name": path.name,
             "duration_seconds": round(media.duration_seconds, 2),
             "size_bytes": media.size_bytes,
             "codec": media.codec,
@@ -290,17 +293,25 @@ def _best_cut_point(
     silences: list[Silence],
     target: float,
     window: float,
+    *,
+    latest_allowed: float | None = None,
 ) -> tuple[float, bool, float | None]:
     """Pick the cut point nearest to ``target``.
 
     Prefers the midpoint of a silence, because that maximises the gap
     between the two chunks. If no silence is near the target, falls back to
     the target itself and reports that the cut was not silence-aligned.
+
+    ``latest_allowed`` caps how far *later* the cut may move. A later cut
+    means a bigger chunk, and the chunk has to stay inside the byte budget
+    that Gnani's 10 MB limit imposes.
     """
     if not silences:
         return target, False, None
 
     candidates = [s for s in silences if abs(s.midpoint - target) <= window]
+    if latest_allowed is not None:
+        candidates = [s for s in candidates if s.midpoint <= latest_allowed]
     if not candidates:
         return target, False, None
 
@@ -350,6 +361,7 @@ def plan_chunks(
     total_duration: float,
     total_size_bytes: int,
     target_bytes: int,
+    max_bytes: int,
     silences: list[Silence],
 ) -> list[tuple[float, float, bool, float | None]]:
     """Work out chunk boundaries.
@@ -368,18 +380,34 @@ def plan_chunks(
     if bytes_per_second <= 0:
         return [(0.0, total_duration, False, None)]
 
-    chunk_duration = target_bytes / bytes_per_second
-    # Guard against a pathological estimate producing thousands of chunks.
-    chunk_duration = max(chunk_duration, 30.0)
+    # The chunk duration follows the byte target, but two hard limits apply.
+    #
+    # 1. Gnani accepts at most 100 files per job, so a chunk can never be
+    #    shorter than total_duration / 100.
+    # 2. A chunk must stay under the hard per-file byte limit, so the
+    #    duration is capped by that limit too.
+    min_chunk_duration = total_duration / MAX_FILES_PER_JOB
+    chunk_duration = max(target_bytes / bytes_per_second, min_chunk_duration)
 
-    # How far we are willing to move a boundary to find a silence.
-    window = min(chunk_duration * 0.25, 60.0)
+    # How far we are willing to move a boundary to find a silence. A wider
+    # window finds better sentence breaks but risks a chunk that is too big.
+    window = min(chunk_duration * 0.35, 60.0)
+
+    # A boundary may never produce a chunk larger than the byte budget, so
+    # moving a cut *later* to reach a silence is only allowed while the
+    # chunk still fits. Moving it *earlier* is always safe. The 0.95 factor
+    # keeps a margin under the hard limit, because the size estimate is an
+    # average and the encoder can overshoot it locally.
+    max_chunk_duration = (max_bytes * 0.95 / bytes_per_second) if bytes_per_second else chunk_duration
 
     boundaries: list[tuple[float, bool, float | None]] = []
     position = 0.0
     while position + chunk_duration < total_duration:
         target = position + chunk_duration
-        cut, at_silence, sil_dur = _best_cut_point(silences, target, window)
+        latest_allowed = position + max_chunk_duration
+        cut, at_silence, sil_dur = _best_cut_point(
+            silences, target, window, latest_allowed=latest_allowed
+        )
         # Never cut before the previous boundary, and always make progress.
         if cut <= position + 1.0:
             cut = target
@@ -402,6 +430,7 @@ def split_audio(
     *,
     target_bytes: int,
     silences: list[Silence] | None = None,
+    _depth: int = 0,
 ) -> list[Chunk]:
     """Split an audio file into chunks, each under ``target_bytes``.
 
@@ -421,6 +450,7 @@ def split_audio(
         total_duration=media.duration_seconds,
         total_size_bytes=total_size,
         target_bytes=target_bytes,
+        max_bytes=settings.gnani_max_file_bytes,
         silences=silences,
     )
 
@@ -465,9 +495,31 @@ def split_audio(
 
     over = [c for c in chunks if c.size_bytes > settings.gnani_max_file_bytes]
     if over:
-        raise IngestError(
-            f"Internal error: {len(over)} chunk(s) exceed Gnani's 10 MB limit. "
-            f"Re-run with a smaller chunk target."
+        if _depth >= 3:
+            raise IngestError(
+                f"Could not split the audio below Gnani's "
+                f"{settings.gnani_max_file_bytes // (1024 * 1024)} MB per-file limit."
+            )
+        # The size estimate assumed a constant bitrate, and a cut moved to a
+        # silence can overshoot. Rather than failing the upload, split
+        # again with a proportionally smaller target, into a fresh
+        # directory so the superseded files cannot be mistaken for chunks.
+        log.warning(
+            "chunks exceeded the Gnani file limit, re-splitting",
+            extra={
+                "oversized_count": len(over),
+                "largest_bytes": max(c.size_bytes for c in over),
+                "depth": _depth,
+            },
+        )
+        for chunk in chunks:
+            chunk.path.unlink(missing_ok=True)
+        return split_audio(
+            src,
+            out_dir / f"pass{_depth + 1}",
+            target_bytes=max(target_bytes // 2, 512 * 1024),
+            silences=silences,
+            _depth=_depth + 1,
         )
 
     log.info(

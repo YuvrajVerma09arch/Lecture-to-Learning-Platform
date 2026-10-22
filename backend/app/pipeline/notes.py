@@ -26,15 +26,18 @@ The grounding rule is enforced in three places:
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..llm.factory import LLMError, complete_json, notes_llm, notes_segments_llm
+from ..llm.factory import LLMError, complete_json, notes_llm, notes_segments_llm, parse_json_reply
 from ..logging_setup import get_logger
 from .segment import Segment, format_timestamp
 
 log = get_logger(__name__)
+
+# Delay between a failed model call and the next attempt. Kept as a module
+# constant so tests can shorten it.
+RETRY_DELAY_SECONDS = 0.5
 
 
 @dataclass
@@ -203,7 +206,7 @@ def _segment_prompt(segment: Segment) -> str:
     ts = f"[{format_timestamp(segment.start_seconds)} - {format_timestamp(segment.end_seconds)}]"
     visual_note = (
         "\n\nIMPORTANT: the teacher refers here to something visible on screen or on a "
-        "board. You must NOT reconstruct it. State what is missing in "
+        "board. You MUST NOT reconstruct it. State what is missing in "
         "`uncertainty_note` and in the explanation, and leave `equations` empty "
         "unless the equation was also spoken aloud."
         if segment.visual_dependent
@@ -254,16 +257,10 @@ async def generate_segment_note(
             reply = await complete_json(
                 llm, prompt=prompt, system=SEGMENT_SYSTEM, schema=SEGMENT_SCHEMA
             )
+            data = parse_json_reply(reply)
         except LLMError as exc:
             last_error = str(exc)
-            await asyncio.sleep(0.5 * (attempt + 1))
-            continue
-
-        try:
-            data = reply if isinstance(reply, dict) else json.loads(reply)
-        except (json.JSONDecodeError, TypeError) as exc:
-            last_error = f"unparseable JSON: {exc}"
-            await asyncio.sleep(0.5 * (attempt + 1))
+            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
             continue
 
         note = SegmentNote(
@@ -371,6 +368,9 @@ def _validate_document(
     problems: list[str] = []
     valid_indexes = {s.index for s in segments}
 
+    if not isinstance(document, dict):
+        return ["model did not return a JSON object"]
+
     sections = document.get("sections") or []
     if not sections:
         problems.append("no sections produced")
@@ -437,16 +437,10 @@ async def merge_notes(
             reply = await complete_json(
                 model, prompt=prompt, system=MERGE_SYSTEM, schema=MERGE_SCHEMA
             )
+            data = parse_json_reply(reply)
         except LLMError as exc:
             last_error = str(exc)
-            await asyncio.sleep(1.0 * (attempt + 1))
-            continue
-
-        try:
-            data = reply if isinstance(reply, dict) else json.loads(reply)
-        except (json.JSONDecodeError, TypeError) as exc:
-            last_error = f"unparseable JSON: {exc}"
-            await asyncio.sleep(1.0 * (attempt + 1))
+            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
             continue
 
         problems = _validate_document(data, segments, notes)
@@ -472,7 +466,7 @@ async def merge_notes(
             + "\n\nYour previous attempt had these problems, which you must fix: "
             + "; ".join(problems)
         )
-        await asyncio.sleep(1.0 * (attempt + 1))
+        await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
 
     raise LLMError(f"Could not merge notes into a valid document: {last_error}")
 
