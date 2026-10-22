@@ -53,11 +53,23 @@ class LLMError(Exception):
     per-minute rate limit. Retrying a quota error immediately burns the
     remaining daily allowance and still fails, so the two must be
     distinguished.
+
+    ``retry_after_seconds`` carries the provider's own instruction about
+    when to try again ("Please try again in 41.4s"). When it is present it
+    is the authoritative wait: a per-minute token budget refills on a
+    schedule the caller cannot guess.
     """
 
-    def __init__(self, message: str, *, kind: str = ErrorKind.UNKNOWN) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: str = ErrorKind.UNKNOWN,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.kind = kind
+        self.retry_after_seconds = retry_after_seconds
 
     @property
     def retryable(self) -> bool:
@@ -66,6 +78,26 @@ class LLMError(Exception):
     @property
     def is_quota(self) -> bool:
         return self.kind == ErrorKind.QUOTA
+
+
+#: "Please try again in 41.4s", "try again in 420ms", "retry in 20h38m".
+_RETRY_AFTER = re.compile(
+    r"try again in\s+([\d.]+)\s*(ms|s|m|h)\b", re.IGNORECASE
+)
+
+_UNIT_SECONDS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+
+
+def parse_retry_after(message: str) -> float | None:
+    """Extract the provider's requested wait from an error message."""
+    match = _RETRY_AFTER.search(message)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    return value * _UNIT_SECONDS.get(match.group(2).lower(), 1.0)
 
 
 def classify_error(exc: Exception) -> LLMError:
@@ -79,19 +111,26 @@ def classify_error(exc: Exception) -> LLMError:
 
     message = str(exc)
     lowered = message.lower()
+    retry_after = parse_retry_after(message)
 
     if "exceeded your current quota" in lowered or "resource_exhausted" in lowered:
-        return LLMError(message, kind=ErrorKind.QUOTA)
+        return LLMError(message, kind=ErrorKind.QUOTA, retry_after_seconds=retry_after)
     if "quota" in lowered:
-        return LLMError(message, kind=ErrorKind.QUOTA)
+        return LLMError(message, kind=ErrorKind.QUOTA, retry_after_seconds=retry_after)
     if "429" in message or "rate limit" in lowered or "too many requests" in lowered:
-        return LLMError(message, kind=ErrorKind.RATE_LIMIT)
+        return LLMError(
+            message, kind=ErrorKind.RATE_LIMIT, retry_after_seconds=retry_after
+        )
     if "503" in message or "502" in message or "504" in message or "unavailable" in lowered:
-        return LLMError(message, kind=ErrorKind.SERVER)
+        return LLMError(message, kind=ErrorKind.SERVER, retry_after_seconds=retry_after)
     if "401" in message or "403" in message or "invalid_api_key" in lowered:
         return LLMError(message, kind=ErrorKind.CLIENT)
     if "404" in message and "model" in lowered:
         return LLMError(message, kind=ErrorKind.CLIENT)
+    if "413" in message or "request too large" in lowered:
+        return LLMError(
+            message, kind=ErrorKind.RATE_LIMIT, retry_after_seconds=retry_after
+        )
     if "did not match the required shape" in lowered or "not valid json" in lowered:
         return LLMError(message, kind=ErrorKind.SHAPE)
     return LLMError(message, kind=ErrorKind.UNKNOWN)

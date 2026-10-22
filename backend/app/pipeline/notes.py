@@ -26,6 +26,7 @@ The grounding rule is enforced in three places:
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -40,6 +41,41 @@ log = get_logger(__name__)
 # Delay between a failed model call and the next attempt. Kept as a module
 # constant so tests can shorten it.
 RETRY_DELAY_SECONDS = 0.5
+
+# Pause before retrying a rate-limited or unavailable call. The budget is
+# per minute, so the retry has to land in a later window.
+RATE_LIMIT_RETRY_SECONDS = 10.0
+
+# How much of each segment's transcript goes into the merge prompt. The
+# merge call is the largest request in the pipeline, and both providers
+# enforce a tokens-per-minute budget that a 413 will blow.
+MERGE_TRANSCRIPT_CHARS = 600
+
+# Minimum gap between two model calls in the notes workload.
+#
+# Both providers we can use enforce a tokens-per-minute budget, and the
+# free tiers are tight. Firing eight calls at once exhausted the budget
+# and made the *merge* call -- which is the largest -- fail with a 413.
+# Pacing the calls lets the window refill. The notes workload is a batch
+# job, so a couple of seconds of spacing costs nothing that matters.
+MIN_CALL_INTERVAL_SECONDS = 2.0
+
+
+class _Pacer:
+    """Enforces a minimum interval between model calls."""
+
+    def __init__(self, interval: float) -> None:
+        self._interval = interval
+        self._lock = asyncio.Lock()
+        self._last = 0.0
+
+    async def wait(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            gap = self._interval - (now - self._last)
+            if gap > 0:
+                await asyncio.sleep(gap)
+            self._last = time.monotonic()
 
 
 @dataclass
@@ -173,7 +209,8 @@ Rules you must follow:
 - `equations` contains ONLY equations that were actually spoken aloud in this segment, written in plain text (for example `F = ma`). If no equation was spoken, return an empty list.
 - NEVER write an equation, diagram, or figure that the teacher referred to but did not speak out. Audio has no visual channel.
 - If the teacher refers to something visible ("this equation", "this diagram", "ye wala"), set `uncertainty_note` to a short sentence naming what is missing, and say so in the explanation. Do not guess its content.
-- Do not add facts that are not in the segment. Do not add examples the teacher did not give."""
+- Do not add facts that are not in the segment. Do not add examples the teacher did not give.
+- Keep the explanation SHORT: three to five sentences, under 120 words. The note is merged into a larger document later, so detail here is wasted budget."""
 
 MERGE_SYSTEM = """You merge per-segment lecture notes into one coherent study document for Indian college students.
 
@@ -230,6 +267,7 @@ async def generate_segment_note(
     segment: Segment,
     *,
     max_attempts: int = 3,
+    pacer: _Pacer | None = None,
 ) -> SegmentNote:
     """Generate and validate the note for one segment.
 
@@ -248,6 +286,8 @@ async def generate_segment_note(
 
     for attempt in range(max_attempts):
         try:
+            if pacer is not None:
+                await pacer.wait()
             reply = await complete_json(
                 llm, prompt=prompt, system=SEGMENT_SYSTEM, schema=SegmentNotePayload
             )
@@ -257,7 +297,18 @@ async def generate_segment_note(
                 raise
             last_error = str(exc)
             last_kind = exc.kind
-            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+            # A rate limit or a server error needs a real pause: the
+            # budget is per minute, so a short retry lands in the same
+            # window that already rejected us. When the provider says how
+            # long to wait, that is the authoritative answer -- a
+            # per-minute token budget refills on a schedule the caller
+            # cannot guess.
+            delay = RETRY_DELAY_SECONDS * (attempt + 1)
+            if exc.kind in (ErrorKind.RATE_LIMIT, ErrorKind.SERVER):
+                delay = RATE_LIMIT_RETRY_SECONDS * (2**attempt)
+            if exc.retry_after_seconds:
+                delay = max(delay, exc.retry_after_seconds + 1.0)
+            await asyncio.sleep(delay)
             continue
 
         note = SegmentNote(
@@ -291,7 +342,7 @@ async def generate_segment_note(
 async def generate_segment_notes(
     segments: list[Segment],
     *,
-    concurrency: int = 2,
+    concurrency: int = 1,
     llm: Any = None,
     chain: list[Any] | None = None,
 ) -> list[SegmentNote]:
@@ -307,6 +358,7 @@ async def generate_segment_notes(
     if chain is None:
         chain = [llm] if llm is not None else notes_llm_chain(segment=True)
     semaphore = asyncio.Semaphore(concurrency)
+    pacer = _Pacer(MIN_CALL_INTERVAL_SECONDS)
     # Index into the provider chain. It only moves forward, and only when
     # a provider fails in a way another provider can fix.
     state = {"index": 0}
@@ -317,7 +369,11 @@ async def generate_segment_notes(
             # when a provider fails in a way another provider can fix.
             provider = chain[min(state["index"], len(chain) - 1)]
             try:
-                return segment.index, await generate_segment_note(provider, segment), None
+                return (
+                    segment.index,
+                    await generate_segment_note(provider, segment, pacer=pacer),
+                    None,
+                )
             except LLMError as exc:
                 if exc.is_quota and state["index"] < len(chain) - 1:
                     state["index"] += 1
@@ -334,7 +390,7 @@ async def generate_segment_notes(
                         provider = chain[state["index"]]
                         return (
                             segment.index,
-                            await generate_segment_note(provider, segment),
+                            await generate_segment_note(provider, segment, pacer=pacer),
                             None,
                         )
                     except LLMError as exc2:
@@ -362,9 +418,12 @@ def _merge_prompt(segments: list[Segment], notes: list[SegmentNote]) -> str:
         if note is None:
             continue
         ts = f"{format_timestamp(segment.start_seconds)}-{format_timestamp(segment.end_seconds)}"
+        transcript = segment.text
+        if len(transcript) > MERGE_TRANSCRIPT_CHARS:
+            transcript = transcript[:MERGE_TRANSCRIPT_CHARS] + " ..."
         block = (
             f"### Transcript segment {segment.index} ({ts})\n"
-            f"Teacher said: {segment.text}\n"
+            f"Teacher said: {transcript}\n"
             f"Segment note heading: {note.heading}\n"
             f"Segment note: {note.explanation}"
         )
@@ -470,11 +529,13 @@ async def merge_notes(
         chain = [llm] if llm is not None else notes_llm_chain(segment=False)
     state = {"index": 0}
     last_error = ""
+    pacer = _Pacer(MIN_CALL_INTERVAL_SECONDS)
 
     for attempt in range(max_attempts):
         model = chain[min(state["index"], len(chain) - 1)]
         prompt = _merge_prompt(segments, notes)
         try:
+            await pacer.wait()
             reply = await complete_json(
                 model, prompt=prompt, system=MERGE_SYSTEM, schema=MergedDocumentPayload
             )
@@ -490,7 +551,12 @@ async def merge_notes(
             if not exc.retryable:
                 raise
             last_error = str(exc)
-            await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
+            delay = RETRY_DELAY_SECONDS * (attempt + 1)
+            if exc.kind in (ErrorKind.RATE_LIMIT, ErrorKind.SERVER):
+                delay = RATE_LIMIT_RETRY_SECONDS * (2**attempt)
+            if exc.retry_after_seconds:
+                delay = max(delay, exc.retry_after_seconds + 1.0)
+            await asyncio.sleep(delay)
             continue
 
         problems = _validate_document(data, segments, notes)
@@ -500,7 +566,7 @@ async def merge_notes(
             return NotesDocument(
                 title=str(data.get("title") or title).strip() or title,
                 summary=str(data.get("summary") or "").strip(),
-                sections=data.get("sections") or [],
+                sections=_attach_timestamps(data.get("sections") or [], segments),
                 key_terms=[str(t).strip() for t in (data.get("key_terms") or []) if str(t).strip()],
                 created_at=time.time(),
             )
@@ -519,6 +585,36 @@ async def merge_notes(
         await asyncio.sleep(RETRY_DELAY_SECONDS * (attempt + 1))
 
     raise LLMError(f"Could not merge notes into a valid document: {last_error}")
+
+
+def _attach_timestamps(
+    sections: list[dict[str, Any]], segments: list[Segment]
+) -> list[dict[str, Any]]:
+    """Give each merged section the time span of the segments it cites.
+
+    The merge model is asked which transcript segments back each section,
+    so the timestamps can be derived rather than asked for. Without this,
+    a merged document has no links back to the audio -- and the brief
+    requires every note to be traceable to its source segment.
+    """
+    by_index = {s.index: s for s in segments}
+    out: list[dict[str, Any]] = []
+    for section in sections:
+        item = dict(section)
+        if item.get("start_seconds") is None:
+            cited = []
+            for raw in item.get("segment_indexes") or []:
+                try:
+                    seg = by_index.get(int(raw))
+                except (TypeError, ValueError):
+                    continue
+                if seg is not None:
+                    cited.append(seg)
+            if cited:
+                item["start_seconds"] = min(s.start_seconds for s in cited)
+                item["end_seconds"] = max(s.end_seconds for s in cited)
+        out.append(item)
+    return out
 
 
 def build_fallback_document(
@@ -566,8 +662,47 @@ def build_fallback_document(
 
     return NotesDocument(
         title=title,
-        summary="",
+        summary=_derive_summary(sections),
         sections=sections,
         key_terms=key_terms,
         created_at=time.time(),
+    )
+
+
+def _derive_summary(sections: list[dict[str, Any]]) -> str:
+    """Build a summary from the section headings and explanations.
+
+    The brief requires a lecture summary. When the merge model cannot
+    produce one, an empty summary would leave a required element missing,
+    so the degraded path derives one from the material it does have. It
+    is mechanical rather than written, and it says so.
+    """
+    if not sections:
+        return ""
+    headings = [str(s.get("heading") or "").strip() for s in sections]
+    headings = [h for h in headings if h]
+    if not headings:
+        return ""
+
+    parts: list[str] = []
+    for section in sections:
+        explanation = str(section.get("explanation") or "").strip()
+        if not explanation:
+            continue
+        # The first sentence of each section, trimmed.
+        sentence = explanation.split(". ")[0].strip().rstrip(".")
+        if sentence:
+            parts.append(sentence)
+        if len(parts) >= 4:
+            break
+
+    if not parts:
+        return "The lecture covers: " + "; ".join(headings) + "."
+
+    return (
+        "This lecture covers "
+        + ", ".join(headings[:4])
+        + ". In summary: "
+        + ". ".join(parts)
+        + "."
     )
