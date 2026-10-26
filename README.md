@@ -24,7 +24,7 @@ backend/app/          FastAPI application
   pipeline/           ingest -> transcribe -> segment -> note -> merge
   retrieval/          FTS5 + embeddings (hybrid search), grounded reranking
   llm/                provider-neutral model access, error classification
-backend/tests/        219 tests, all offline
+backend/tests/        264 tests, all offline
 agent/                the LiveKit agent worker and the STT subclass
   bench/              the latency benchmark harness
 web/                  Vite + React + TypeScript front end
@@ -211,9 +211,11 @@ It needs `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` from
 `GROQ_API_KEY` for the conversational model. The `agent` package puts
 `backend/` on the import path itself, so this command needs no `PYTHONPATH`.
 
-The worker joins a room named after the lecture (`lecture-<id>`), so the
-student and the agent end up in the same place without a shared secret in
-the URL. The browser gets its room token from `POST /api/livekit/token`,
+Each voice session joins its own room (`lecture-<id>-<session>`), named
+after the lecture so the agent knows what to ground its answers in. The
+token carries the room configuration that dispatches the tutor agent
+when the room is created, so the agent joins with the student every
+time. The browser gets its room token from `POST /api/livekit/token`,
 which is why the LiveKit API secret never reaches the client.
 
 ### The notes pipeline from the command line
@@ -257,7 +259,7 @@ PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py   # turn-taking s
 .venv/bin/python -m pytest -q
 ```
 
-219 tests, all passing, in about 45 seconds. **No test calls a remote API.**
+264 tests, all passing, in about a minute. **No test calls a remote API.**
 The Gnani and LLM clients are replaced with fakes, every test gets its own
 temporary SQLite file and cache directory, and the retry delays are shortened.
 A test that does exercise the live API is marked `@pytest.mark.live` and is

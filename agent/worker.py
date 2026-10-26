@@ -7,9 +7,10 @@ process as the request handler.
 It shares the SQLite file with the API, so the tutor reads the same
 transcript and the same notes the notes reader shows.
 
-Run it with:
+Run it with the thin CLI, which discovers the ``server`` object in this
+module:
 
-    .venv/bin/python -m agent.worker
+    .venv/bin/python -m livekit.agents start agent/worker.py
 
 or, during development, through the LiveKit CLI:
 
@@ -19,16 +20,32 @@ or, during development, through the LiveKit CLI:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import math
 import time
+from pathlib import Path
 from typing import Any
 
-from livekit.agents import AgentServer, JobContext, RoomInputOptions, metrics
-from livekit.agents.voice import AgentSession
+# The LiveKit worker reads its configuration from the environment rather
+# than from the settings object, so the .env file has to be loaded before
+# the framework starts. It is a no-op when the variables are already set.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_ENV_FILE = _PROJECT_ROOT / ".env"
+if _ENV_FILE.exists():
+    with contextlib.suppress(ImportError):
+        from dotenv import load_dotenv
 
-from app.logging_setup import configure_logging, get_logger
+        load_dotenv(_ENV_FILE, override=False)
 
-from .tutor import (
+from livekit.agents import AgentServer, JobContext, metrics  # noqa: E402
+from livekit.agents.voice import AgentSession  # noqa: E402
+from livekit.agents.voice.room_io import RoomOptions  # noqa: E402
+
+from app.logging_setup import configure_logging, get_logger  # noqa: E402
+
+from .tutor import (  # noqa: E402
+    AGENT_NAME,
     TutorState,
     build_agent,
     build_session,
@@ -38,7 +55,29 @@ from .tutor import (
 
 log = get_logger(__name__)
 
-server = AgentServer()
+#: How long a worker process may take to start.
+#:
+#: The default is 10 seconds, and importing the framework and the plugins
+#: takes about 8.5 seconds on this machine -- with several processes
+#: starting at once, they all missed the deadline and the worker
+#: registered but could not serve a session.
+INITIALIZE_PROCESS_TIMEOUT = 90.0
+
+#: Never report the worker as full because of system load.
+#:
+#: The framework's default gate is 0.7 of system CPU, measured across
+#: the whole machine. This machine's CPU is held between 0.5 and 0.99 by
+#: processes unrelated to the worker, so the gate flapped: the worker
+#: told LiveKit it was full, dispatch was withheld for turns that were
+#: already queued, and 14 of 24 benchmark turns failed with "the agent
+#: never became ready". The worker serves one session at a time, so
+#: system load says nothing about whether it can accept a job, and the
+#: gate only delays that job. It reverts to the cloud default when a
+#: worker token is configured; this deployment mints tokens itself.
+server = AgentServer(
+    initialize_process_timeout=INITIALIZE_PROCESS_TIMEOUT,
+    load_threshold=math.inf,
+)
 
 #: The data-channel topic the latency markers are published on, so the
 #: client can correlate them with its own readings. The two processes do
@@ -46,7 +85,7 @@ server = AgentServer()
 MARKER_TOPIC = "lecture-tutor-markers"
 
 
-@server.rtc_session(agent_name="lecture-tutor")
+@server.rtc_session(agent_name=AGENT_NAME)
 async def tutor_entrypoint(ctx: JobContext) -> None:
     """Run one tutoring session.
 
@@ -72,16 +111,21 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
     session: AgentSession = build_session(state)
     agent = build_agent(state)
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_options=RoomInputOptions(),
-    )
+    await start_session(session, agent, ctx.room)
+
+    # The benchmark will not publish its question until this arrives, so
+    # the agent cannot miss the first seconds of the audio.
+    _publish(ctx, {"type": "session_ready"})
 
     await publish_markers(session, state, ctx)
 
-    # The session runs until the room ends.
-    await session.generate_reply()
+
+async def start_session(session: AgentSession, agent: Any, room: Any) -> None:
+    await session.start(
+        agent=agent,
+        room=room,
+        room_options=RoomOptions(),
+    )
 
 
 async def publish_markers(
@@ -121,6 +165,8 @@ async def publish_markers(
             state.timings.llm_first_token = time.monotonic()
         state.timings.llm_complete = time.monotonic()
         _publish(ctx, {"type": "turn_timings", **state.timings.to_dict()})
+        if text := getattr(item, "text_content", None):
+            _publish(ctx, {"type": "assistant_text", "text": text})
 
     @session.on("metrics_collected")
     def _on_metrics(ev: Any) -> None:
@@ -153,25 +199,25 @@ def _publish(ctx: JobContext, payload: dict[str, Any]) -> None:
     session: the markers are diagnostic.
     """
     try:
-        from livekit import rtc
-
-        packet = rtc.DataPacket(
-            topic=MARKER_TOPIC,
-            payload=json.dumps(payload).encode("utf-8"),
-        )
         asyncio.create_task(
-            ctx.room.local_participant.publish_data(packet)
+            ctx.room.local_participant.publish_data(
+                json.dumps(payload).encode("utf-8"), topic=MARKER_TOPIC
+            )
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("could not publish a marker", extra={"error": str(exc)[:200]})
 
 
 def main() -> None:
-    """Run the worker."""
-    from livekit.agents import cli
+    """Run the worker.
+
+    The thin CLI is the supported way to run an agent in 1.8.8: it
+    discovers the ``server`` object and wires up the process lifecycle.
+    """
+    from livekit.agents.__main__ import main as agents_main
 
     configure_logging("INFO")
-    cli.run_app(server)
+    raise SystemExit(agents_main(["start", "agent/worker.py"]))
 
 
 if __name__ == "__main__":

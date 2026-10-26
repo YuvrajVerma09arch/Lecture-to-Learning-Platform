@@ -16,6 +16,7 @@ says so, and the tutor says so out loud rather than inventing something.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,7 +24,7 @@ from typing import Any
 # The LiveKit plugins register themselves at import time, and the
 # registration is rejected from a worker thread. Importing them here, at
 # module level, keeps that on the main thread.
-from livekit.agents import Agent, inference, stt
+from livekit.agents import Agent, inference, stt, tokenize, tts
 from livekit.agents.llm import function_tool
 from livekit.plugins import gnani
 
@@ -38,44 +39,68 @@ log = get_logger(__name__)
 #: The prefix the backend uses for a lecture's room.
 ROOM_PREFIX = "lecture-"
 
+#: The name the worker registers under, and the name the backend's token
+#: dispatches (``backend/app/api/livekit.py``). A test pins the two
+#: constants together: a mismatch means rooms open without a tutor.
+AGENT_NAME = "lecture-tutor"
+
+#: The per-session suffix the backend appends to a room name: eight hex
+#: characters that make every minted room name unique. Stripped before
+#: the lecture id is read. (Regex, so the lecture id itself -- which
+#: never contains a dash -- cannot be confused for the suffix.)
+_SESSION_SUFFIX = re.compile(r"-[0-9a-f]{8}$")
+
 #: The language a session falls back to when the room says nothing.
 DEFAULT_LANGUAGE = "en-IN"
 
-#: A Timbre v2.5 voice has exactly one preferred language, so the voice has
-#: to change with the language. The mapping is the one in the Gnani
-#: documentation.
+#: Every Timbre v2.5 voice, by language.
+#:
+#: A v2.5 voice has exactly one preferred language, so the voice has to
+#: change with the language. The API *rejects* a voice that is not in
+#: the model's list -- a wrong entry here is a runtime 400, not a
+#: warning -- so this table is the contract with the service rather
+#: than a preference.
+TTS_VOICES_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
+    "en-IN": ("Kaveri", "Trupti", "Devika", "Pranav", "Shlok", "Girish"),
+    "hi-IN": (
+        "Nalini", "Bhavna", "Yashvi", "Urmila", "Jwala", "Chitra", "Ambuja",
+        "Deepak", "Roopesh", "Vikrant", "Hemraj", "Jalaj", "Omkar",
+    ),
+    "hi-en": ("Poorvi",),
+    "ta-IN": ("Asmita", "Trisha", "Brinda", "Vedika", "Noopur"),
+    "te-IN": ("Suhana", "Lehara", "Lavanya", "Yukti", "Varuni"),
+    "kn-IN": ("Saanvi", "Kavin"),
+    "ml-IN": ("Reshma", "Riyaan"),
+    "mr-IN": ("Zahira", "Ishaan"),
+    "bn-IN": ("Kirra", "Dhruva"),
+    "gu-IN": ("Falak", "Veera"),
+    "pa-IN": ("Mehuli", "Zayan"),
+}
+
+#: The voice used for each language.
 TTS_VOICES: dict[str, str] = {
-    "en-IN": "Kaveri",
-    "hi-IN": "Nalini",
-    "gu-IN": "Falak",
-    "ta-IN": "Vani",
-    "te-IN": "Vani",
-    "kn-IN": "Soumya",
-    "ml-IN": "Reshma",
-    "bn-IN": "Kirra",
-    "mr-IN": "Zahira",
-    "pa-IN": "Mehuli",
-    "hi-en": "Poorvi",
-    "auto": "Kaveri",
+    language: voices[0] for language, voices in TTS_VOICES_BY_LANGUAGE.items()
 }
 
 #: The voice used when a language is not in the table above.
-FALLBACK_VOICE = "Kaveri"
+FALLBACK_VOICE = "Nalini"
 
 
 def lecture_id_from_room(room_name: str) -> str | None:
     """The lecture a room belongs to.
 
-    The backend mints a token for a room called ``lecture-<lecture_id>``,
-    so the room name is where the agent learns which lecture to ground its
-    answers in.
+    The backend mints a token for a room called
+    ``lecture-<lecture_id>-<session>`` (the older, suffix-less
+    ``lecture-<lecture_id>`` shape parses too), so the room name is
+    where the agent learns which lecture to ground its answers in.
+    The session suffix is stripped before the id is read.
     """
     if not room_name:
         return None
-    if room_name.startswith(ROOM_PREFIX):
-        lecture_id = room_name[len(ROOM_PREFIX) :].strip()
-        return lecture_id or None
-    return None
+    if not room_name.startswith(ROOM_PREFIX):
+        return None
+    lecture_id = _SESSION_SUFFIX.sub("", room_name[len(ROOM_PREFIX) :]).strip()
+    return lecture_id or None
 
 
 def voice_for_language(language: str | None) -> str:
@@ -304,21 +329,34 @@ def build_stt(language: str) -> stt.STT:
     )
 
 
-def build_tts(language: str) -> gnani.TTS:
-    """The Gnani Timbre TTS for a language.
+def build_tts(language: str) -> tts.StreamAdapter:
+    """The Gnani Timbre TTS for a language, wrapped to speak incrementally.
 
-    The WebSocket transport is used because the plugin's ``stream()``
-    always speaks it, and it is what makes sentence-level incremental
-    synthesis possible: the LLM's first complete sentence starts playing
-    before the rest of the answer exists.
+    The plugin's own ``stream()`` collects the whole answer before it
+    opens its WebSocket request, so without the wrapper the first audible
+    byte would wait for the LLM to finish. ``StreamAdapter`` chunks the
+    answer at sentence boundaries instead: each complete sentence becomes
+    its own WebSocket request as soon as the next one starts arriving,
+    and the first sentence plays while the rest of the answer is still
+    being generated.
+
+    The wrapper reports ``capabilities.streaming``, which is what stops
+    the framework's ``tts_node`` from wrapping it a second time, and
+    Gnani bills per audio hour (``docs/live-api-findings.md`` section 6),
+    so one request per sentence costs the same credits as one request per
+    answer.
     """
     settings = get_settings()
-    return gnani.TTS(
+    gnani_tts = gnani.TTS(
         voice=voice_for_language(language),
         model="timbre-v2.5",
         language=language,
         api_key=settings.gnani_api_key,
         synthesize_method="websocket",
+    )
+    return tts.StreamAdapter(
+        tts=gnani_tts,
+        sentence_tokenizer=tokenize.blingfire.SentenceTokenizer(retain_format=True),
     )
 
 
@@ -363,8 +401,6 @@ def build_session(state: TutorState) -> Any:
         tts=build_tts(state.language),
         vad=inference.VAD(model="silero", min_silence_duration=0.5),
         turn_handling=build_turn_handling(),
-        tools=[make_lookup_tool(state)],
-        instructions=INSTRUCTIONS,
     )
     log.info(
         "tutor session configured",

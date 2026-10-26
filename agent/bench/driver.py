@@ -22,6 +22,7 @@ data channel rather than by comparing timestamps.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import wave
@@ -45,6 +46,23 @@ SAMPLE_RATE = 16000
 
 #: How long to wait for the agent to fall silent before the turn is over.
 AGENT_SILENCE_SECONDS = 1.2
+
+#: How long to wait for the agent to be ready to hear the question.
+#:
+#: The room is fresh for every turn, so the agent joins after we do --
+#: Stage C measured that join at 6.16 s. Frames published before the
+#: agent is listening are lost to the speech recogniser, so the question
+#: waits for both the agent's ready marker and its subscription to our
+#: track, whichever is later. The first full run showed dispatch itself
+#: can be held back past 25 s when the worker reports full capacity
+#: (job requests arrived +27.7 to +40 s after the turn began), so 60 s
+#: gives a failing dispatch room to recover instead of being recorded
+#: as a failure before it happens.
+AGENT_READY_TIMEOUT_SECONDS = 60.0
+
+#: A beat of silence published before the question, so the agent's
+#: speech pipeline is open before any word arrives.
+QUESTION_PREAMBLE_SECONDS = 1.0
 
 #: The data-channel topic the agent publishes its markers on.
 MARKER_TOPIC = "lecture-tutor-markers"
@@ -115,7 +133,10 @@ async def synthesise_question(
 
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        key = f"{abs(hash((question.text, question.language, question.pause_seconds))) % (10**12)}"
+        # hash() is salted per process, so its key changes every run and the
+        # cache would never hit -- sha256 gives the same key everywhere.
+        fingerprint = f"{question.text}|{question.language}|{question.pause_seconds}"
+        key = hashlib.sha256(fingerprint.encode()).hexdigest()[:24]
         cached = cache_dir / f"{key}.raw"
         if cached.exists():
             return cached.read_bytes()
@@ -245,29 +266,61 @@ async def run_turn(
 
         room = rtc.Room()
         source = rtc.AudioSource(SAMPLE_RATE, 1)
+        hearing = asyncio.Event()
+        ready = asyncio.Event()
+
+        @room.on("local_track_subscribed")
+        def _on_local_track(*_args: Any) -> None:
+            hearing.set()
 
         @room.on("track_subscribed")
-        def _on_track(track: rtc.Track, publication: Any) -> None:
+        def _on_track(
+            track: rtc.Track, publication: Any, participant: Any
+        ) -> None:
             if track.kind != rtc.TrackKind.KIND_AUDIO:
                 return
             asyncio.create_task(_consume_agent_audio(track, record))
 
         @room.on("data_received")
-        def _on_data(
-            packet: rtc.DataPacket, participant: Any, kind: Any, topic: str | None
-        ) -> None:
-            if topic != MARKER_TOPIC:
+        def _on_data(packet: rtc.DataPacket) -> None:
+            if packet.topic != MARKER_TOPIC:
                 return
             try:
-                payload = json.loads(packet.payload.decode("utf-8"))
+                payload = json.loads(packet.data.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 return
             record.server_markers[payload.get("type", "unknown")] = payload
+            if payload.get("type") == "session_ready":
+                ready.set()
+            elif payload.get("type") == "assistant_text":
+                record.agent_text = str(payload.get("text") or "")
 
         await room.connect(livekit_url, token)
 
         track = rtc.LocalAudioTrack.create_audio_track("benchmark-question", source)
-        await room.local_participant.publish_track(track)
+        # The agent's RoomIO audio input only accepts publications whose
+        # source is SOURCE_MICROPHONE; the default publish options record
+        # SOURCE_UNKNOWN and the agent silently drops the track, so the
+        # speech recogniser never hears the question.
+        await room.local_participant.publish_track(
+            track,
+            rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE),
+        )
+
+        # The agent joins and starts its session after we do; audio pushed
+        # before it is listening never reaches the speech recogniser, so
+        # the question waits for both signals or fails the turn.
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(hearing.wait(), ready.wait()),
+                timeout=AGENT_READY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            record.error = "the agent never became ready to hear the question"
+            await room.disconnect()
+            return record
+
+        pcm = b"\x00" * int(SAMPLE_RATE * 2 * QUESTION_PREAMBLE_SECONDS) + pcm
 
         # Publish the question at real-time pace, which is what the server's
         # voice activity detection expects.
@@ -287,7 +340,8 @@ async def run_turn(
         # Wait for the agent to answer, then for it to fall silent.
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if record.agent_end is not None:
+            end = record.agent_end
+            if end is not None and time.monotonic() - end >= AGENT_SILENCE_SECONDS:
                 break
             await asyncio.sleep(0.05)
 
@@ -298,6 +352,20 @@ async def run_turn(
         record.error = f"{type(exc).__name__}: {exc}"
 
     return record
+
+
+#: Peak amplitude (of 32768, s16le) a decoded frame must reach to count as
+#: the agent speaking. The agent's output track is published when the
+#: session starts and streams digital silence from then on, so timing the
+#: answer on any frame stamps ``first_audio`` before the question has even
+#: been asked.
+AGENT_AUDIO_PEAK = 500
+
+
+def _is_audible(frame: rtc.AudioFrame) -> bool:
+    """Whether a decoded frame carries speech rather than silence."""
+    # frame.data is a memoryview already cast to int16 samples, not bytes.
+    return any(abs(sample) >= AGENT_AUDIO_PEAK for sample in frame.data)
 
 
 async def _consume_agent_audio(track: rtc.Track, record: TurnRecord) -> None:
@@ -311,7 +379,9 @@ async def _consume_agent_audio(track: rtc.Track, record: TurnRecord) -> None:
         return
 
     try:
-        async for _event in stream:
+        async for event in stream:
+            if not _is_audible(event.frame):
+                continue
             now = time.monotonic()
             if record.first_audio is None:
                 record.first_audio = now

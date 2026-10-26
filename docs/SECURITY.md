@@ -58,8 +58,8 @@ itself.
 
 - The LiveKit API secret never leaves the backend. The browser asks
   `POST /api/livekit/token` and receives a JWT scoped to one room
-  (`lecture-<id>`) with a one-hour TTL. The secret is not in the response,
-  the URL, or the front-end bundle.
+  (`lecture-<id>-<session>`) with a one-hour TTL. The secret is not in
+  the response, the URL, or the front-end bundle.
 - No provider key is in the front-end bundle. The web app talks only to this
   project's own API.
 - There is no third-party analytics or telemetry. Nothing is sent anywhere

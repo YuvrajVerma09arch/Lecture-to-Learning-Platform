@@ -1,6 +1,6 @@
 # Benchmark report
 
-**Date:** 2026-10-22
+**Date:** 2026-10-22 (§3.3 voice run measured 2026-10-26)
 **Subject:** the Gnani Lecture-to-Learning Platform
 **Labels used throughout:** **MEASURED** (observed on the live system),
 **ESTIMATED** (a reasoned figure, not observed), **MOCKED** (covered by a
@@ -19,7 +19,7 @@ was not measured, the section says so and gives the reason.
 | How long from the student stopping speaking to the transcript? | ~1.9 s with the shipped configuration, 840 ms with the server's defaults | MEASURED |
 | How long from the answer text to the first playable audio? | 1.049 s time-to-first-byte over the REST transport | MEASURED |
 | Which deployment configuration is fastest? | **Only configuration A was run.** A is the shipping configuration. B and C were not run | MEASURED (A) / ESTIMATED (B, C) |
-| End-to-end user-perceived latency over 20 voice turns | See §3.3 | see §3.3 |
+| End-to-end user-perceived latency over 21 measured voice turns | **p50 4.437 s, p95 5.785 s** over 21 of 24 completed turns; the 3 failures are listed in §3.3 | MEASURED |
 
 The brief asked for at least 20 measured end-to-end turns per configuration
 that could legitimately be tested, with the sample count, the percentiles and
@@ -125,29 +125,72 @@ that determines how quickly the first sentence is audible. The 1.049 s
 figure is therefore a lower bound for the REST path and an *indication* of
 the websocket path's cost, not a measurement of it.
 
-### 3.3 End-to-end voice turns — see the status line below
+### 3.3 End-to-end voice turns — MEASURED
 
 This section is the one the brief cares about most, and it is kept short
 because the number is not a single measurement: it is a distribution over
 turns, and it depends on how many of them completed.
 
-**Status at the time of writing: the end-to-end voice benchmark had not been
-run.** The harness and the measured run are the last piece of work in
-progress. What is measured so far is every link of the chain in §3.2, on
-the real APIs, plus the two configuration changes that were made in
-response to those measurements (the trailing-silence injection, and the
-VAD-derived speech end).
+**The run: 2026-10-26, 04:49–05:29 UTC, 2,399.65 s.** 25 scripted questions
+over the Telugu lecture `lec_54a9c1e582af41d0` — 20 the lecture covers, 5
+it does not — asked one at a time with a 90-second minimum gap between
+question ends, through a real LiveKit room. One warm-up turn ran first and
+is excluded, leaving **24 measured turns: 21 completed, 3 failed.** The
+network path is the one in §2.2: the developer's machine in India to
+LiveKit Cloud's US region (`wss://name-5pv71xyx.livekit.cloud`), and to
+`api.groq.com` and `api.vachana.ai`. The stack is shipping configuration A
+(§5): Gnani Prisma streaming STT, the local turn detector, hybrid
+retrieval, `qwen/qwen3.8-27b` on Groq, Gnani Timbre TTS through the
+sentence-streaming `StreamAdapter` of §3.2.
 
-This report will not carry a p50 or a p95 for a run that did not happen.
-When the run happens, it belongs here, with the sample count, the warm-up
-runs excluded and counted, the failures listed, and the network path stated.
+**Seconds from the end of the student's turn to the first playable audio
+of the answer** — nearest-rank percentiles, recomputed independently from
+the run's raw records:
+
+| Sample | n | p50 | p95 | mean | min | max |
+|---|---|---|---|---|---|---|
+| All completed turns | 21 | 4.437 | 5.785 | 4.272 | 2.872 | 6.090 |
+| Covered questions | 16 | 4.486 | 6.090 | 4.592 | 3.130 | 6.090 |
+| Not-covered questions (declines) | 5 | 3.226 | 3.601 | 3.249 | 2.872 | 3.601 |
+
+By language: te-IN n=9, p50 4.437 / p95 5.575 · hi-en n=6, p50 3.340 / p95
+5.785 · en-IN n=4, p50 3.226 / p95 6.090 · gu-IN n=1, 4.908 · hi-IN n=1,
+4.480. The two single-turn rows are observations, not distributions. The
+spoken answer itself runs p50 15.873 s from first audio to last audio
+(p95 23.591 s).
+
+**The three failures, listed rather than dropped.** The last three
+questions (te-IN, hi-en, hi-IN, all covered ones) recorded `the agent
+produced no audio`. The worker log gives the reason: Groq's daily token
+quota for `qwen/qwen3.8-27b` ran out mid-run. Roughly 95,000 tokens were
+free when the run began; the worker logged 19 rate-limit rejections
+between 05:24:49 and 05:28:15 UTC, and every one of the 21 completed
+turns finished before the first rejection. This is a free-tier
+credit-timing artifact, not a latency result: it is why the sample is 21
+and not 24, and no figure above includes a failed turn.
+
+**Abstention.** Five measured questions were outside the lecture. The
+harness's English-only decline matcher scores **3 of 5 declined**; read by
+hand, **all five decline** — the two misses are Hindi/Hinglish declines
+("Yeh topic isi lecture mein nahi hai…", "Lecture mein … nahi cover kiya
+gya…") that `DECLINE_PHRASES` cannot match. Both numbers stand, as scored
+and as read; no out-of-lecture question was ever answered with outside
+content. Separately, 2 of the 16 completed covered questions *were*
+declined — both pause-heavy, and in both cases the tutor's answer shows it
+understood the question to be about a word nobody said ("Amity",
+"Crystal"). The disfluent input was transcribed or interpreted wrongly and
+the tutor declined rather than guess; the turn still cost its full
+latency, and it is not counted as an abstention error because the question
+was covered.
 
 **Why the number cannot be assembled from the parts.** The chain is
 serial — the transcript is needed before the retrieval, the retrieval before
 the model, the model before the synthesis — so the per-stage numbers add
-up. But the sum of the parts is not the perceived latency: the first
-sentence starts synthesising as soon as it exists, so the audible answer
-begins before the answer is finished, and the perceived latency is
+up. But the sum of the parts is not the perceived latency: the
+synthesis is chunked at sentence boundaries (`StreamAdapter` wraps the
+websocket transport, so each complete sentence becomes its own request
+as soon as the next one starts arriving), the audible answer begins
+before the answer is finished, and the perceived latency is
 end-of-speech → first byte of the *first sentence*, not end-of-speech → the
 whole answer. The only way to get that number honestly is to measure it.
 
@@ -335,7 +378,7 @@ happened.
 
 ### MOCKED
 
-The whole test suite: 219 tests, none of which call a remote API. The Gnani
+The whole test suite: 264 tests, none of which call a remote API. The Gnani
 and LLM clients are replaced with fakes, every test gets its own temporary
 SQLite file and cache directory, and the retry delays are shortened. A test
 that does exercise a live API is marked `@pytest.mark.live` and is skipped
@@ -355,7 +398,7 @@ downstream failure never destroys a cached transcript.
 | Gnani's own credit rate | Gnani publishes no rate card. The dashboard is the authority and has not been read |
 | The LiveKit Cloud project region | Resolved: it is a US region. The project owner confirmed it |
 | The cost of configuration B | The account's usage panel has not been read |
-| The end-to-end user-perceived latency of a voice turn | The run had not happened when this report was written — see §3.3 |
+| The end-to-end user-perceived latency of a voice turn | Resolved: measured 2026-10-26 over 21 completed turns — see §3.3 |
 | Whether a Gujarati *lecture* transcribes as well as a Hindi one | The batch API accepts `gu-IN` (measured), but no Gujarati audio was available to test with |
 | Batch STT with a file over 10 MB | The lecture fitted in one chunk. The chunking path is tested with real ffmpeg and the limit is enforced, but no real job has exceeded it |
 | The accuracy of the Telugu transcript | Partially verified. The transcript contains real ASR errors on Sanskrit philosophical vocabulary. The concepts survive in the notes; the words do not always |
@@ -371,6 +414,17 @@ PYTHONPATH=backend .venv/bin/python scripts/probe_batch.py
 PYTHONPATH=backend .venv/bin/python scripts/probe_llm_models.py
 PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py
 ```
+
+The end-to-end voice run of §3.3 needs the API and the agent worker running
+in separate terminals (§2.2), then:
+
+```bash
+.venv/bin/python -m agent.bench.harness --lecture-id <lecture_id> --out run.json
+```
+
+It spends Groq tokens and Gnani voice credits, takes about 40 minutes for
+25 questions at the shipped 90-second pacing, and writes every turn record
+to the JSON file.
 
 The ingestion timings are reproduced by running the pipeline over the demo
 lecture:

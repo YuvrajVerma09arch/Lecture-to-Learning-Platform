@@ -9,11 +9,13 @@ answer when the lecture does not cover the question.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
 
 from agent import tutor
+from app.api import livekit as livekit_api
 from app.retrieval import fts
 
 
@@ -29,6 +31,18 @@ class TestRoomNaming:
 
     def test_the_prefix_alone_has_no_lecture(self):
         assert tutor.lecture_id_from_room("lecture-") is None
+
+    def test_the_session_suffix_is_stripped(self):
+        assert tutor.lecture_id_from_room("lecture-lec_abc123-deadbeef") == "lec_abc123"
+
+    def test_a_minted_room_round_trips_to_its_lecture(self):
+        room = livekit_api.room_name_for("lec_abc123")
+        assert tutor.lecture_id_from_room(room) == "lec_abc123"
+
+    def test_the_backend_and_the_worker_use_one_agent_name(self):
+        # A mismatch dispatches a name no worker registered under, and the
+        # room opens without a tutor.
+        assert livekit_api.AGENT_NAME == tutor.AGENT_NAME
 
 
 class TestVoiceSelection:
@@ -49,6 +63,30 @@ class TestVoiceSelection:
 
     def test_no_language_gets_the_fallback(self):
         assert tutor.voice_for_language(None) == tutor.FALLBACK_VOICE
+
+    def test_every_language_has_at_least_one_voice(self):
+        from agent.bench.questions import LANGUAGES
+
+        for language in LANGUAGES:
+            assert tutor.TTS_VOICES_BY_LANGUAGE.get(language), (
+                f"no Timbre v2.5 voice is configured for {language}"
+            )
+
+    def test_a_voice_is_never_shared_between_languages(self):
+        """A v2.5 voice has one preferred language, so sharing one would
+        make the wrong voice read the wrong language."""
+        seen: dict[str, str] = {}
+        for language, voices in tutor.TTS_VOICES_BY_LANGUAGE.items():
+            for voice in voices:
+                assert voice not in seen, (
+                    f"{voice} is listed for both {seen.get(voice)} and {language}"
+                )
+                seen[voice] = language
+
+    def test_the_fallback_voice_is_a_real_voice(self):
+        assert tutor.FALLBACK_VOICE in {
+            voice for voices in tutor.TTS_VOICES_BY_LANGUAGE.values() for voice in voices
+        }
 
 
 class TestLanguageSelection:
@@ -254,17 +292,51 @@ class TestLookupTool:
 
 
 class TestSessionConstruction:
+    async def test_the_session_builds_against_the_installed_agent_api(self):
+        # AgentSession rejects unknown kwargs at construction, and a stale
+        # one crashes every dispatched job before the student sees anything.
+        # Built inside a running loop because the job entrypoint does the same.
+        session = tutor.build_session(tutor.TutorState(lecture_id="lec_1"))
+        agent = tutor.build_agent(tutor.TutorState(lecture_id="lec_1"))
+        assert type(session).__name__ == "AgentSession"
+        assert agent.instructions
+        assert len(agent.tools) == 1
+
     def test_the_stt_is_the_tuned_gnani_one(self):
         stt = tutor.build_stt("hi-IN")
         assert type(stt).__name__ == "TunedGnaniSTT"
 
-    def test_the_tts_uses_the_websocket_transport(self):
-        tts = tutor.build_tts("hi-IN")
-        assert type(tts).__name__ == "TTS"
-        # The plugin's stream() always speaks the WebSocket, which is what
-        # makes sentence-level incremental synthesis possible.
-        assert hasattr(tts, "stream")
+    def test_the_tts_is_wrapped_for_incremental_speech(self):
+        adapter = tutor.build_tts("hi-IN")
+        assert type(adapter).__name__ == "StreamAdapter"
+        # capabilities.streaming=True is what stops the framework's
+        # tts_node from wrapping the adapter a second time.
+        assert adapter.capabilities.streaming is True
+        assert adapter._wrapped_tts._opts.synthesize_method == "websocket"
 
     def test_the_tts_voice_follows_the_language(self):
-        assert tutor.build_tts("gu-IN")._opts.voice == "Falak"
-        assert tutor.build_tts("hi-IN")._opts.voice == "Nalini"
+        assert tutor.build_tts("gu-IN")._wrapped_tts._opts.voice == "Falak"
+        assert tutor.build_tts("hi-IN")._wrapped_tts._opts.voice == "Nalini"
+
+    async def test_the_first_sentence_leaves_before_the_answer_finishes(self):
+        adapter = tutor.build_tts("hi-IN")
+        stream = adapter._sentence_tokenizer.stream()
+
+        async def drain(timeout: float) -> list[str]:
+            out: list[str] = []
+            while True:
+                try:
+                    ev = await asyncio.wait_for(stream.__anext__(), timeout)
+                except (TimeoutError, StopAsyncIteration):
+                    return out
+                out.append(ev.token)
+
+        stream.push_text("Namaste. This is ")
+        # a partial sentence is held back: nothing has reached the TTS yet
+        assert await drain(0.05) == []
+        stream.push_text("ek test sentence. Aur ek ")
+        # the first sentence leaves BEFORE end_input -- synthesis starts
+        # while the LLM is still generating the rest of the answer
+        assert await drain(1.0) == ["Namaste. This is ek test sentence."]
+        stream.end_input()
+        assert await drain(1.0) == [" Aur ek "]

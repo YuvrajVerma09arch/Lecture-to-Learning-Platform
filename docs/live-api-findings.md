@@ -167,7 +167,8 @@ Measured with `timbre-v2.5`, voice `Nalini`, language `hi-IN`:
 The REST endpoint returns the whole file in one response, so time-to-first-byte
 and total time are nearly identical. For the live voice path the plugin uses
 the **WebSocket** transport, which streams chunks — that is the transport
-that matters for perceived latency, and it is measured in Phase 2.
+that matters for perceived latency, and it stays unmeasured until the
+end-to-end run happens.
 
 ---
 

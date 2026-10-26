@@ -30,8 +30,8 @@ different failure handling.
   │  FastAPI backend  (backend/app)            │   │  LiveKit Cloud           │
   │  ─────────────────────────────────────     │   │  (wss://<project>.livekit │
   │  api/lectures  api/chat  api/flashcards    │   │   .cloud)                │
-  │  api/livekit    api/health  api/ready      │   │                          │
-  │  ─────────────────────────────────────     │   │  room: lecture-<id>      │
+  │  api/livekit    api/health  api/ready      │   │  room: lecture-<id>      │
+  │  ─────────────────────────────────────     │   │  unique per session      │
   │  pipeline/  ingest → transcribe → segment   │   └───────┬──────────┬───────┘
   │             → note → merge                   │           │          │
   │  retrieval/ fts5 + embeddings → rerank       │   room token│          │ WebSocket

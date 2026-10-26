@@ -184,6 +184,15 @@ class TestBenchmarkResult:
         assert stats["declined_correctly"] == 0
         assert stats["answered_incorrectly"] == 1
 
+    def test_an_uncaptured_answer_text_is_counted_separately(self):
+        result = self._result()
+        result.records[3].agent_text = ""
+        stats = result.abstention_accuracy()
+        assert stats["expected_to_decline"] == 1
+        assert stats["text_not_captured"] == 1
+        assert stats["declined_correctly"] == 0
+        assert stats["answered_incorrectly"] == 0
+
     def test_the_conditions_are_recorded(self):
         result = self._result()
         payload = result.to_dict()
@@ -231,3 +240,19 @@ class TestReport:
         )
         text = report.render(result)
         assert "the agent produced no audio" in text
+
+    def test_it_reports_uncaptured_answer_text(self):
+        result = harness.BenchmarkResult()
+        result.records.append(
+            driver.TurnRecord(
+                question="q",
+                language="te-IN",
+                expected_covered=False,
+                question_end=1.0,
+                first_audio=2.5,
+                agent_end=4.0,
+                agent_text="",
+            )
+        )
+        text = report.render(result)
+        assert "Answer text was not captured" in text

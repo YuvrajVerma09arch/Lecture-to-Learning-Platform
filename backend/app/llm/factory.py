@@ -22,16 +22,17 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# The LiveKit plugins must be imported on the main thread: they register
-# themselves at import time, and the registration is rejected from a
-# worker thread. Importing them here, at module load, means a request
-# handler only does a cached module lookup.
-from livekit.plugins import google as _google_plugin  # noqa: E402
-from livekit.plugins import groq as _groq_plugin  # noqa: E402
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ..config import get_settings
 from ..logging_setup import get_logger
+
+# The LiveKit plugins must be imported on the main thread: they register
+# themselves at import time, and the registration is rejected from a
+# worker thread. Importing them here, at module load, means a request
+# handler only does a cached module lookup.
+from .plugins import google_plugin as _google_plugin  # noqa: E402
+from .plugins import groq_plugin as _groq_plugin  # noqa: E402
 
 log = get_logger(__name__)
 

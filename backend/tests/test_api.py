@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from fastapi.testclient import TestClient
 from app import db as db_mod
 from app.api import chat as chat_api
 from app.api import lectures as lectures_api
+from app.api import livekit as livekit_api
 from app.retrieval import fts, rerank
 
 
@@ -257,7 +259,11 @@ class TestLiveKitToken:
             json={"lecture_id": seeded_lecture, "participant_name": "Student"},
         ).json()
 
-        assert payload["room"] == "lecture-lec_test"
+        # A fresh room per mint: the token's roomConfig is only honoured
+        # when the room is created, so a colliding name would silently
+        # drop the agent dispatch.
+        room = payload["room"]
+        assert re.fullmatch(r"lecture-lec_test-[0-9a-f]{8}", room)
         assert payload["url"]
         token = payload["token"]
         # Three dot-separated parts: a JWT.
@@ -269,10 +275,25 @@ class TestLiveKitToken:
         claims = json.loads(base64.urlsafe_b64decode(body))
         video = claims["video"]
         assert video["roomJoin"] is True
-        assert video["room"] == "lecture-lec_test"
+        assert video["room"] == room
         assert video["canPublish"] is True
         assert video["canSubscribe"] is True
         assert claims["exp"] > claims["nbf"]
+
+        # The token dispatches the tutor when the room is created.
+        agents = claims.get("roomConfig", {}).get("agents", [])
+        assert [agent.get("agentName") for agent in agents] == [
+            livekit_api.AGENT_NAME
+        ]
+
+    def test_two_mints_never_share_a_room(self, client, seeded_lecture):
+        rooms = set()
+        for _ in range(2):
+            payload = client.post(
+                "/api/livekit/token", json={"lecture_id": seeded_lecture}
+            ).json()
+            rooms.add(payload["room"])
+        assert len(rooms) == 2
 
     def test_it_rejects_an_empty_lecture_id(self, client):
         response = client.post(

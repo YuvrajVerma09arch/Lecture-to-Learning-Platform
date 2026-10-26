@@ -97,6 +97,7 @@ class RunConditions:
     concurrency: int = 1
     scripted: bool = True
     warmup_turns_excluded: int = 0
+    min_question_gap_s: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,6 +112,7 @@ class RunConditions:
             "concurrency": self.concurrency,
             "scripted": self.scripted,
             "warmup_turns_excluded": self.warmup_turns_excluded,
+            "min_question_gap_s": self.min_question_gap_s,
         }
 
 
@@ -126,6 +128,21 @@ DECLINE_PHRASES = (
     "lecture does not",
     "not in the lecture",
 )
+
+#: The minimum wall-clock gap between the ends of two consecutive
+#: questions, measured on the driver's monotonic clock.
+#:
+#: The questions are asked back-to-back by a script, but a real student
+#: pauses between questions, and the gap is what keeps one turn's LLM
+#: calls inside their own rolling token window: Groq's on-demand tier
+#: for ``qwen/qwen3.8-27b`` allows 7000 input tokens and 1000 output
+#: tokens per minute, and one turn's answer loop spends several
+#: thousand of each across its tool-calling inference calls. In the
+#: unpaced run, four of twenty-four measured turns died as "the agent
+#: produced no audio" because the previous turn's tokens were still
+#: inside the window (3x ITPM 429, 1x OTPM 429). Ninety seconds puts
+#: each turn alone in its own minute.
+QUESTION_MIN_GAP_SECONDS = 90.0
 
 
 @dataclass
@@ -191,16 +208,25 @@ class BenchmarkResult:
         )
 
     def abstention_accuracy(self) -> dict[str, Any]:
-        """How the tutor handled the questions the lecture does not cover."""
+        """How the tutor handled the questions the lecture does not cover.
+
+        A turn whose answer text never reached the client is counted as
+        ``text_not_captured`` rather than as a wrong answer: without the
+        text there is nothing to judge, and calling it fabrication would
+        be its own lie.
+        """
         declined_correctly = 0
         answered_incorrectly = 0
+        text_not_captured = 0
         expected = 0
         for record in self.records:
             if record.expected_covered or not record.ok:
                 continue
             expected += 1
             text = (record.agent_text or "").lower()
-            if any(phrase in text for phrase in DECLINE_PHRASES):
+            if not text.strip():
+                text_not_captured += 1
+            elif any(phrase in text for phrase in DECLINE_PHRASES):
                 declined_correctly += 1
             else:
                 answered_incorrectly += 1
@@ -208,6 +234,7 @@ class BenchmarkResult:
             "expected_to_decline": expected,
             "declined_correctly": declined_correctly,
             "answered_incorrectly": answered_incorrectly,
+            "text_not_captured": text_not_captured,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,6 +277,7 @@ async def run_benchmark(
         llm_notes=settings.llm_model_notes,
         llm_chat=settings.llm_model_chat,
         warmup_turns_excluded=warmup,
+        min_question_gap_s=QUESTION_MIN_GAP_SECONDS,
     )
     result.started_at = time.time()
 
@@ -257,7 +285,12 @@ async def run_benchmark(
 
     # The first turn is a warm-up: the first call pays for a cold
     # connection and a cold model. It is run, and then excluded.
+    last_question_end: float | None = None
     for index, question in enumerate(questions):
+        if last_question_end is not None:
+            remaining = QUESTION_MIN_GAP_SECONDS - (time.monotonic() - last_question_end)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
         if on_progress is not None:
             on_progress(index, len(questions), question)
         record = await run_turn(
@@ -267,6 +300,8 @@ async def run_benchmark(
             livekit_url=livekit_url,
             cache_dir=cache_dir,
         )
+        if record.question_end is not None:
+            last_question_end = record.question_end
         if index < warmup:
             log.info(
                 "warm-up turn complete, excluded from the figures",

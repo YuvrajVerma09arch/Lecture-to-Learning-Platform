@@ -74,6 +74,11 @@ def render(result: Any) -> str:
         f"declined correctly **{abstention['declined_correctly']}**, "
         f"answered anyway **{abstention['answered_incorrectly']}**"
     )
+    if abstention["text_not_captured"]:
+        lines.append(
+            f"- Answer text was not captured on **{abstention['text_not_captured']}** "
+            "of them; those are counted in neither column above."
+        )
     lines.append("")
     lines.append(
         "A decline is a pass. A confident answer to a question the lecture "
