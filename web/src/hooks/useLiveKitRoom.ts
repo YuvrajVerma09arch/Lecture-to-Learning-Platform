@@ -1,10 +1,10 @@
 /**
  * The voice room.
  *
- * The backend mints a LiveKit token; this hook joins the room named
- * after the lecture, publishes the microphone, listens to the tutor's
- * audio and keeps the student's recognised speech and the tutor's
- * answers as text.
+ * The backend mints a LiveKit token; this hook joins the room the
+ * token names (the lecture plus a per-session suffix), publishes the
+ * microphone, listens to the tutor's audio and keeps the student's
+ * recognised speech and the tutor's answers as text.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {

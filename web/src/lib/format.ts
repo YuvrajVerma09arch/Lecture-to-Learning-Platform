@@ -25,8 +25,11 @@ export function parseTime(value: string): number | null {
 }
 
 /**
- * A URL fragment for a heading. Latin words are kept, other scripts are
- * dropped, so a Devanagari heading still yields a usable, stable id.
+ * A URL fragment for a heading.
+ *
+ * Letters of any script are kept, so a Devanagari or Gujarati heading
+ * still yields a readable and stable id instead of collapsing to
+ * "section".
  */
 export function slugify(text: string): string {
   const base = text

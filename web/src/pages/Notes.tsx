@@ -79,7 +79,7 @@ export function Notes({
 
   if (!lectureId) {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-5xl px-4 py-6">
         <EmptyState
           title="Choose a lecture"
           body="Pick a lecture above to read its notes. Each lecture is a recording that has already been transcribed and turned into study notes."
@@ -90,7 +90,7 @@ export function Notes({
 
   if (notes.status === "loading") {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-5xl px-4 py-6">
         <LoadingState label="Loading the notes" />
       </main>
     );
@@ -98,7 +98,7 @@ export function Notes({
 
   if (notes.status === "error" && notes.error) {
     return (
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-5xl px-4 py-6">
         <ErrorState error={notes.error} onRetry={notes.reload} />
       </main>
     );
@@ -106,18 +106,29 @@ export function Notes({
 
   const payload = notes.data;
   if (!payload || !payload.document) {
+    const failed = lecture?.status === "failed";
     return (
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main id="main" className="mx-auto max-w-5xl px-4 py-6">
         <EmptyState
-          title="The notes are not ready yet"
-          body={`This lecture is ${payload?.status ?? "not finished"}. The notes appear here as soon as the notes pass finishes.`}
+          title={failed ? "This lecture did not finish" : "The notes are not ready yet"}
+          body={
+            failed
+              ? `The recording was processed up to the ${
+                  lecture?.failed_stage ?? "unknown"
+                } stage, which failed. ${
+                  lecture?.failure_reason ?? ""
+                }`.trim()
+              : `This lecture is ${
+                  payload?.status ?? "not finished"
+                }. The notes appear here as soon as the notes pass finishes.`
+          }
         />
       </main>
     );
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 pb-16 pt-4">
+    <main id="main" className="mx-auto max-w-5xl px-4 pb-16 pt-4">
       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">
         <div className="order-2 min-w-0 lg:order-1">
           <p className="text-sm text-muted">

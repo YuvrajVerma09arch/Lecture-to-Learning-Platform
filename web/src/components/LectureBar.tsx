@@ -54,13 +54,19 @@ export function LectureBar({
         >
           {lectures.map((lecture) => (
             <option key={lecture.id} value={lecture.id}>
-              {lecture.title}
+              {lecture.title} ({lecture.language_code})
             </option>
           ))}
         </select>
         {status ? (
           <p className="text-sm text-muted">
             <span className="font-medium text-ink">Status:</span> {status}
+            {selected?.failed_stage
+              ? ` at the ${selected.failed_stage} stage`
+              : ""}
+            {selected?.failure_reason
+              ? ` — ${selected.failure_reason}`
+              : ""}
           </p>
         ) : null}
       </div>

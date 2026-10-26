@@ -46,5 +46,6 @@ export function useRoute(): [Route, (to: string, params?: Record<string, string>
 
 /** The lecture id in the URL, if there is one. */
 export function lectureParam(route: Route): string | null {
-  return route.params.get("lecture");
+  const value = route.params.get("lecture");
+  return value && value.trim() ? value : null;
 }
