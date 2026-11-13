@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # preamble, which matters because the answer is spoken aloud.
     groq_api_key: str = Field(default="", repr=False)
     llm_model_chat: str = "qwen/qwen3.8-27b"
+    # Extra Groq models behind the primary chat model, tried in order when it
+    # fails. Both were measured to answer on this account on 2026-11-13; the
+    # older `llama-3.3-70b-versatile` default returned 404 and several newer
+    # ids are not served here at all.
+    llm_model_chat_fallbacks: list[str] = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    # Primary for the voice path. Probed on 2026-11-13: only
+    # `gemini-3.1-flash-lite` answered (the others hit quota or 5xx/404).
+    # Used only when GOOGLE_API_KEY is set; otherwise Groq starts the chain.
+    llm_model_chat_google: str = "gemini-3.1-flash-lite"
 
     # --- Storage ---
     # These read DATA_DIR / DB_PATH / CACHE_DIR from the environment, so a

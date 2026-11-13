@@ -170,6 +170,50 @@ class TestGeneration:
         assert len(cards) == 1
         assert fallback.calls, "the fallback provider should have been used"
 
+    async def test_a_server_outage_also_switches_to_the_fallback(self, lecture):
+        class DeadLLM(FakeLLM):
+            def chat(self, *, chat_ctx, **kwargs):
+                raise LLMError(
+                    "failed to generate LLM completion after 4 attempts "
+                    "(caused by ServerError: 504 Gateway Timeout)",
+                    kind="server",
+                )
+
+        fallback = FakeLLM(
+            default=[
+                _card(
+                    "What is the difference between Karma Yoga and Jnana Yoga?",
+                    "కర్మ యోగం మరియు జ్ఞాన యోగం మధ్య తేడా ఉంది.",
+                    [1],
+                )
+            ]
+        )
+        with db_mod.get_conn() as conn:
+            cards = await cards_mod.generate_flashcards(
+                conn, lecture, chain=[DeadLLM(), fallback]
+            )
+        assert len(cards) == 1
+        assert fallback.calls
+
+    async def test_an_unknown_failure_does_not_switch_providers(self, lecture):
+        class BrokenLLM(FakeLLM):
+            def chat(self, *, chat_ctx, **kwargs):
+                raise LLMError("something odd happened", kind="unknown")
+
+        fallback = FakeLLM(
+            default=[
+                _card(
+                    "What is the difference between Karma Yoga and Jnana Yoga?",
+                    "కర్మ యోగం మరియు జ్ఞాన యోగం మధ్య తేడా ఉంది.",
+                    [1],
+                )
+            ]
+        )
+        with db_mod.get_conn() as conn:
+            with pytest.raises(LLMError):
+                await cards_mod.generate_flashcards(conn, lecture, chain=[BrokenLLM(), fallback])
+        assert not fallback.calls
+
 
 class TestStorage:
     async def test_cards_are_stored_with_their_source_segments(self, lecture):

@@ -247,6 +247,7 @@ async def _call_model(
 ) -> list[Flashcard]:
     prompt = _build_prompt(excerpts, existing_questions)
     last_error = ""
+    last_exc: LLMError | None = None
 
     for attempt in range(max_attempts):
         try:
@@ -258,6 +259,7 @@ async def _call_model(
         except LLMError as exc:
             if not exc.retryable:
                 raise
+            last_exc = exc
             last_error = str(exc)
             delay = (
                 RATE_LIMIT_RETRY_SECONDS * (2**attempt)
@@ -266,7 +268,9 @@ async def _call_model(
             )
             if exc.retry_after_seconds:
                 delay = max(delay, exc.retry_after_seconds + 1.0)
-            await asyncio.sleep(delay)
+            # No point pausing when there is no next attempt to wait for.
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(delay)
             continue
 
         cards, filtered = _payload_to_cards(data, excerpts)
@@ -282,10 +286,16 @@ async def _call_model(
             )
             return []
         last_error = "the model returned no cards"
-        await asyncio.sleep(0.5 * (attempt + 1))
+        last_exc = LLMError(last_error, kind=ErrorKind.SHAPE)
+        if attempt + 1 < max_attempts:
+            await asyncio.sleep(0.5 * (attempt + 1))
 
+    # Keep the classification of what actually failed, so the caller can
+    # decide whether another provider is worth trying.
     raise LLMError(
-        f"Could not generate flashcards after {max_attempts} attempts: {last_error}"
+        f"Could not generate flashcards after {max_attempts} attempts: {last_error}",
+        kind=last_exc.kind if last_exc is not None else ErrorKind.UNKNOWN,
+        retry_after_seconds=last_exc.retry_after_seconds if last_exc is not None else None,
     )
 
 
@@ -364,6 +374,9 @@ async def generate_flashcards(
         chain = [llm] if llm is not None else notes_llm_chain(segment=True)
     pacer = _Pacer(MIN_CALL_INTERVAL_SECONDS)
     state = {"index": 0}
+    # With a fallback available, fail over after the first failure instead of
+    # spending the retry budget on a provider that is clearly not answering.
+    attempts_per_provider = 3 if len(chain) == 1 else 1
 
     # The questions already asked, so the model does not repeat them.
     existing = [
@@ -383,26 +396,32 @@ async def generate_flashcards(
         if not batch:
             break
 
-        provider = chain[min(state["index"], len(chain) - 1)]
-        try:
-            produced = await _call_model(
-                provider, batch, [c.question for c in cards], pacer=pacer
-            )
-        except LLMError as exc:
-            if exc.is_quota and state["index"] < len(chain) - 1:
-                state["index"] += 1
+        produced: list[Flashcard] | None = None
+        while state["index"] < len(chain):
+            provider = chain[state["index"]]
+            try:
+                produced = await _call_model(
+                    provider,
+                    batch,
+                    [c.question for c in cards],
+                    pacer=pacer,
+                    max_attempts=attempts_per_provider,
+                )
+                break
+            except LLMError as exc:
+                # Quota and transient failures both justify moving on. A
+                # quota error cannot be waited out, and a provider that is
+                # down should not hold the whole run hostage when the next
+                # entry in the chain is healthy.
+                if state["index"] >= len(chain) - 1 or not (exc.is_quota or exc.retryable):
+                    raise
                 log.warning(
-                    "flashcard provider quota exhausted, switching to the fallback",
+                    "flashcard provider failed, switching to the next one",
                     extra={"error_kind": exc.kind},
                 )
-                provider = chain[state["index"]]
-                produced = await _call_model(
-                    provider, batch, [c.question for c in cards], pacer=pacer
-                )
-            else:
-                raise
+                state["index"] += 1
 
-        for card in produced:
+        for card in produced or []:
             key = normalise_question(card.question)
             if not key or key in seen:
                 continue

@@ -10,6 +10,7 @@ fails, so the pipeline must recognise it and switch provider instead.
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 from app.llm import factory
 from app.llm.factory import ErrorKind, LLMError, classify_error
@@ -45,6 +46,15 @@ class TestErrorClassification:
 
     def test_a_server_error_is_retryable(self):
         exc = classify_error(Exception("503 UNAVAILABLE: high demand"))
+        assert exc.kind == ErrorKind.SERVER
+        assert exc.retryable is True
+
+    def test_a_wrapped_timeout_is_a_transient_server_error(self):
+        # This is what LiveKit leaves behind after a provider deadline: the
+        # status code is gone, and so is any hint of what went wrong.
+        exc = classify_error(
+            Exception("failed to generate LLM completion after 4 attempts (caused by CancelledError)")
+        )
         assert exc.kind == ErrorKind.SERVER
         assert exc.retryable is True
 
@@ -185,3 +195,54 @@ class TestChainConstruction:
         self._settings(monkeypatch)
         with pytest.raises(LLMError, match="No LLM provider"):
             factory.notes_llm_chain()
+
+
+class AnswerPayload(BaseModel):
+    answer: str
+
+
+class TestStructuredOutput:
+    """The schema hand-off to providers, including batch requests."""
+
+    async def test_a_plain_model_schema_is_sent_as_is(self):
+        fake = FakeLLM(responses=[{"answer": "yes"}])
+
+        reply = await factory.complete_json(fake, prompt="p", system="s", schema=AnswerPayload)
+
+        assert fake.calls[0]["kwargs"]["response_format"] is AnswerPayload
+        assert reply.data == {"answer": "yes"}
+
+    async def test_a_batch_schema_is_wrapped_and_unwrapped(self):
+        # LiveKit's plugins reject `list[Model]` outright, so the request has
+        # to travel as an object and the reply comes back inside it.
+        fake = FakeLLM(responses=[{"items": [{"answer": "a"}, {"answer": "b"}]}])
+
+        reply = await factory.complete_json(fake, prompt="p", schema=list[AnswerPayload])
+
+        sent = fake.calls[0]["kwargs"]["response_format"]
+        assert set(sent.model_fields) == {"items"}
+        assert reply.data == [{"answer": "a"}, {"answer": "b"}]
+
+    async def test_a_bare_batch_is_accepted_too(self):
+        # Some providers ignore the envelope and answer with the array.
+        fake = FakeLLM(responses=[[{"answer": "a"}, {"answer": "b"}]])
+
+        reply = await factory.complete_json(fake, prompt="p", schema=list[AnswerPayload])
+
+        assert reply.data == [{"answer": "a"}, {"answer": "b"}]
+
+    async def test_a_reply_missing_the_envelope_is_a_shape_error(self):
+        fake = FakeLLM(responses=[{"wrong": []}])
+
+        with pytest.raises(LLMError) as excinfo:
+            await factory.complete_json(fake, prompt="p", schema=list[AnswerPayload])
+
+        assert excinfo.value.kind == ErrorKind.SHAPE
+
+    async def test_a_single_model_still_validates(self):
+        fake = FakeLLM(responses=[{"wrong_field": "x"}])
+
+        with pytest.raises(LLMError) as excinfo:
+            await factory.complete_json(fake, prompt="p", schema=AnswerPayload)
+
+        assert excinfo.value.kind == ErrorKind.SHAPE

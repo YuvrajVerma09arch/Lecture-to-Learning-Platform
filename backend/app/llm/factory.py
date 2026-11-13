@@ -18,11 +18,17 @@ Note on Gemini 4: ``gemini-4-*`` models reject ``temperature``, ``top_p`` and
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from livekit.agents.llm import LLM, ChatContext, ChatItem, LLMStream
+from livekit.agents.llm.chat_context import DYNAMIC_INSTRUCTIONS_MESSAGE_ID
+from livekit.agents.llm.fallback_adapter import FallbackAdapter
+from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions
+from livekit.agents.utils.misc import is_given
+from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
 
 from ..config import get_settings
 from ..logging_setup import get_logger
@@ -129,6 +135,16 @@ def classify_error(exc: Exception) -> LLMError:
             message, kind=ErrorKind.RATE_LIMIT, retry_after_seconds=retry_after
         )
     if "503" in message or "502" in message or "504" in message or "unavailable" in lowered:
+        return LLMError(message, kind=ErrorKind.SERVER, retry_after_seconds=retry_after)
+    # LiveKit wraps a provider deadline as "after 4 attempts (caused by
+    # CancelledError)", losing the status code. It is still a transient
+    # failure, and callers that can switch providers need to recognise it.
+    if (
+        "cancellederror" in lowered
+        or "deadline exceeded" in lowered
+        or "timed out" in lowered
+        or "timeout" in lowered
+    ):
         return LLMError(message, kind=ErrorKind.SERVER, retry_after_seconds=retry_after)
     if "401" in message or "403" in message or "invalid_api_key" in lowered:
         return LLMError(message, kind=ErrorKind.CLIENT)
@@ -244,32 +260,331 @@ def notes_segments_llm() -> Any:
     return _google_plugin.LLM(model=model, api_key=settings.google_api_key)
 
 
+#: How much of the conversation the voice path keeps.
+#:
+#: A spoken answer only needs the last few turns to stay coherent. Everything
+#: older still costs input tokens on every request, and during a long study
+#: session that is what pushed the chat model into per-minute rate limits.
+KEEP_LAST_USER_MESSAGES = 3
+KEEP_LAST_ASSISTANT_MESSAGES = 2
+
+_FUNCTION_ITEM_TYPES = frozenset({"function_call", "function_call_output"})
+
+
+def _leading_instructions(items: list[ChatItem]) -> list[ChatItem]:
+    """The instruction preamble at the front of ``items``.
+
+    Mirrors ``ChatContext._leading_instructions``: the first system/developer
+    message, plus the item right after it only when it carries the dynamic
+    instructions id.
+    """
+    idx = next(
+        (
+            i
+            for i, item in enumerate(items)
+            if item.type == "message" and item.role in ("system", "developer")
+        ),
+        None,
+    )
+    if idx is None:
+        return []
+    kept = items[idx : idx + 2]
+    if len(kept) == 2 and kept[1].id != DYNAMIC_INSTRUCTIONS_MESSAGE_ID:
+        kept = kept[:1]
+    return kept
+
+
+def trim_chat_context(chat_ctx: ChatContext) -> ChatContext:
+    """Return a bounded view of ``chat_ctx`` for the voice path.
+
+    Keeps the last :data:`KEEP_LAST_USER_MESSAGES` user messages, the last
+    :data:`KEEP_LAST_ASSISTANT_MESSAGES` assistant messages and the leading
+    instructions. The window starts at whichever of those two falls earlier,
+    so the result is always one contiguous tail -- a context split mid-turn
+    would leave the provider with a function output whose call was dropped.
+
+    Returns a *new* :class:`ChatContext` sharing the item objects; the
+    session's own list is never mutated. When nothing has to be dropped the
+    context is returned unchanged.
+    """
+    items = chat_ctx.items
+
+    user_indices = [
+        i for i, item in enumerate(items) if item.type == "message" and item.role == "user"
+    ]
+    assistant_indices = [
+        i
+        for i, item in enumerate(items)
+        if item.type == "message" and item.role == "assistant"
+    ]
+
+    bounds: list[int] = []
+    if len(user_indices) > KEEP_LAST_USER_MESSAGES:
+        bounds.append(user_indices[-KEEP_LAST_USER_MESSAGES])
+    if len(assistant_indices) > KEEP_LAST_ASSISTANT_MESSAGES:
+        bounds.append(assistant_indices[-KEEP_LAST_ASSISTANT_MESSAGES])
+    if not bounds:
+        return chat_ctx
+
+    start = min(bounds)
+    new_items: list[ChatItem] = []
+    seen: set[str] = set()
+    for item in [*_leading_instructions(items[:start]), *items[start:]]:
+        if item.id in seen:
+            continue
+        seen.add(item.id)
+        new_items.append(item)
+
+    # The context should not open mid-tool-call either.
+    while new_items and new_items[0].type in _FUNCTION_ITEM_TYPES:
+        new_items.pop(0)
+
+    return ChatContext(new_items)
+
+
+class _SchemaForwardingLLM(LLM):
+    """Adapt one provider model so schema requests survive the fallback chain.
+
+    ``FallbackAdapter`` carries request options through ``extra_kwargs`` and
+    exposes no ``response_format`` parameter. The plugins accept it under
+    that name and translate it into the provider's structured-output form;
+    handed over as an ordinary extra kwarg it would reach the HTTP layer as a
+    raw pydantic class. Instances wrapped for the adapter therefore pop it
+    back out and pass it where the plugin expects it.
+
+    Metrics raised by the wrapped instance are re-emitted here, because the
+    adapter subscribes to the object it was given, not to the real plugin.
+    """
+
+    def __init__(self, inner: LLM) -> None:
+        super().__init__()
+        self._inner = inner
+        self._on_metrics_collected = self._reemit_metrics
+        inner.on("metrics_collected", self._on_metrics_collected)
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
+    def provider(self) -> str:
+        return self._inner.provider
+
+    @property
+    def metrics_metadata(self) -> Any:
+        return self._inner.metrics_metadata
+
+    def chat(
+        self,
+        *,
+        chat_ctx: ChatContext,
+        tools: list[Any] | None = None,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+        parallel_tool_calls: Any = NOT_GIVEN,
+        tool_choice: Any = NOT_GIVEN,
+        extra_kwargs: Any = NOT_GIVEN,
+        response_format: Any = NOT_GIVEN,
+    ) -> LLMStream:
+        extra = dict(extra_kwargs) if is_given(extra_kwargs) else {}
+        schema = extra.pop("response_format", NOT_GIVEN)
+        if is_given(response_format):
+            schema = response_format
+
+        kwargs: dict[str, Any] = {
+            "chat_ctx": chat_ctx,
+            "tools": tools,
+            "conn_options": conn_options,
+            "parallel_tool_calls": parallel_tool_calls,
+            "tool_choice": tool_choice,
+        }
+        if extra:
+            kwargs["extra_kwargs"] = extra
+        if is_given(schema):
+            kwargs["response_format"] = schema
+        return self._inner.chat(**kwargs)
+
+    def prewarm(self, *, loop: Any = None) -> None:
+        self._inner.prewarm(loop=loop)
+
+    async def aclose(self) -> None:
+        self._inner.off("metrics_collected", self._on_metrics_collected)
+        await self._inner.aclose()
+
+    def _reemit_metrics(self, *args: Any, **kwargs: Any) -> None:
+        self.emit("metrics_collected", *args, **kwargs)
+
+
+class ChatLLM(LLM):
+    """The session-facing chat model: a fallback chain behind one interface.
+
+    ``FallbackAdapter`` owns its own stream, so metrics and terminal errors
+    arrive on the adapter rather than on the object the session holds. The
+    adapter's stream is returned untouched; this wrapper only forwards the two
+    events the session subscribes to and trims the context before each call.
+    """
+
+    def __init__(self, adapter: FallbackAdapter) -> None:
+        super().__init__()
+        self._adapter = adapter
+        self._on_metrics_collected = self._forward_metrics
+        self._on_error = self._forward_error
+        adapter.on("metrics_collected", self._on_metrics_collected)
+        adapter.on("error", self._on_error)
+
+    @property
+    def model(self) -> str:
+        return self._adapter.model
+
+    @property
+    def provider(self) -> str:
+        return self._adapter.provider
+
+    @property
+    def metrics_metadata(self) -> Any:
+        return self._adapter.metrics_metadata
+
+    @property
+    def models(self) -> list[str]:
+        """The chain's models, best first."""
+        return [instance.model for instance in self._adapter._llm_instances]
+
+    def chat(
+        self,
+        *,
+        chat_ctx: ChatContext,
+        tools: list[Any] | None = None,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+        parallel_tool_calls: Any = NOT_GIVEN,
+        tool_choice: Any = NOT_GIVEN,
+        extra_kwargs: Any = NOT_GIVEN,
+        response_format: Any = NOT_GIVEN,
+    ) -> LLMStream:
+        extra = dict(extra_kwargs) if is_given(extra_kwargs) else {}
+        if is_given(response_format):
+            extra["response_format"] = response_format
+        return self._adapter.chat(
+            chat_ctx=trim_chat_context(chat_ctx),
+            tools=tools,
+            conn_options=conn_options,
+            parallel_tool_calls=parallel_tool_calls,
+            tool_choice=tool_choice,
+            extra_kwargs=extra,
+        )
+
+    def prewarm(self, *, loop: Any = None) -> None:
+        # Under pytest the dummy GOOGLE_API_KEY would make the primary's
+        # prewarm a network call to models.list; the suite must not do that.
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
+        self._adapter.prewarm(loop=loop)
+
+    async def aclose(self) -> None:
+        await self._adapter.aclose()
+        await super().aclose()
+
+    def _forward_metrics(self, *args: Any, **kwargs: Any) -> None:
+        self.emit("metrics_collected", *args, **kwargs)
+
+    def _forward_error(self, *args: Any, **kwargs: Any) -> None:
+        self.emit("error", *args, **kwargs)
+
+
+_CHAT_LLM_CACHE: tuple[tuple[Any, ...], ChatLLM] | None = None
+
+
+def _chat_chain_key(settings: Any) -> tuple[Any, ...]:
+    """What the cached chain depends on, so a settings change rebuilds it."""
+    return (
+        bool(settings.has_google()),
+        bool(settings.has_groq()),
+        settings.llm_model_chat_google,
+        settings.llm_model_chat,
+        tuple(settings.llm_model_chat_fallbacks),
+    )
+
+
+def _build_chat_chain(settings: Any) -> list[LLM]:
+    """Assemble the conversational fallback chain, best first.
+
+    Gemini leads when its key is configured -- it is the faster answer on
+    this account -- then the configured Groq models. Missing providers are
+    skipped rather than fatal, so one dead key cannot take the voice path
+    down, and duplicate model ids are collapsed.
+    """
+    chain: list[LLM] = []
+
+    if settings.has_google():
+        model = settings.llm_model_chat_google
+        log.info("chat llm chain", extra={"provider": "google", "model": model, "role": "primary"})
+        chain.append(_google_plugin.LLM(model=model, api_key=settings.google_api_key))
+
+    if settings.has_groq():
+        model = settings.llm_model_chat
+        log.info(
+            "chat llm chain",
+            extra={
+                "provider": "groq",
+                "model": model,
+                "role": "fallback",
+                # A hybrid-reasoning model that the plugin's own table does
+                # not special-case: without this it spends tokens on thinking
+                # that shows up as narration or delays the first spoken word.
+                "reasoning_effort": "none",
+            },
+        )
+        chain.append(
+            _groq_plugin.LLM(model=model, api_key=settings.groq_api_key, reasoning_effort="none")
+        )
+        for model in settings.llm_model_chat_fallbacks:
+            log.info("chat llm chain", extra={"provider": "groq", "model": model, "role": "fallback"})
+            chain.append(_groq_plugin.LLM(model=model, api_key=settings.groq_api_key))
+
+    if not chain:
+        raise LLMError("No LLM provider is configured. Set GOOGLE_API_KEY or GROQ_API_KEY.")
+
+    deduped: list[LLM] = []
+    seen: set[str] = set()
+    for instance in chain:
+        if instance.model in seen:
+            continue
+        seen.add(instance.model)
+        deduped.append(instance)
+
+    return [_SchemaForwardingLLM(instance) for instance in deduped]
+
+
 def chat_llm() -> Any:
-    """Workload B: the conversational model.
+    """Workload B: the conversational model, with provider fallbacks.
 
     Time-to-first-token dominates the perceived latency of a voice answer,
-    so this is a fast, streaming model on a different provider from
-    Workload A.
+    so the chain leads with the fastest available provider and falls through
+    to the others instead of failing a turn.
 
-    ``reasoning_effort="none"`` is deliberate and not a default: this model
-    is a hybrid-reasoning one that the plugin's own table does not
-    special-case, so without it the API may spend tokens on thinking that
-    has no business in a spoken reply -- it either shows up as narration in
-    the answer or simply delays the first audible word. Groq accepts the
-    value for this model (verified by direct call); a rejected value would
-    be a 400 on the first turn of every session, so the failure is loud.
+    Built once per process: each entry owns an HTTP client, so rebuilding it
+    per question leaked connections. The cache is keyed on the settings the
+    chain depends on, which also keeps tests that swap settings independent.
     """
+    global _CHAT_LLM_CACHE
     settings = get_settings()
-    if not settings.has_groq():
-        raise LLMError("GROQ_API_KEY is not set. Add it to your .env file.")
+    key = _chat_chain_key(settings)
+    if _CHAT_LLM_CACHE is not None and _CHAT_LLM_CACHE[0] == key:
+        return _CHAT_LLM_CACHE[1]
 
-    model = settings.llm_model_chat
-    log.info("chat llm selected", extra={"model": model, "provider": "groq"})
-    return _groq_plugin.LLM(
-        model=model,
-        api_key=settings.groq_api_key,
-        reasoning_effort="none",
+    chain = _build_chat_chain(settings)
+    adapter = FallbackAdapter(
+        chain,
+        # Each attempt gets a generous budget: a slow Gemini answer is still
+        # preferable to a failover storm. Retries stay off inside the chain --
+        # the adapter moves to the next provider instead -- and only the
+        # caller's conn_options govern retries of the whole chain.
+        attempt_timeout=30.0,
+        max_retry_per_llm=0,
+        retry_on_chunk_sent=False,
     )
+    llm = ChatLLM(adapter)
+    log.info("chat llm chain ready", extra={"models": llm.models})
+    _CHAT_LLM_CACHE = (key, llm)
+    return llm
 
 
 def notes_llm_chain(*, segment: bool = False) -> list[Any]:
@@ -303,6 +618,17 @@ def notes_llm_chain(*, segment: bool = False) -> list[Any]:
             "notes llm chain",
             extra={"provider": "groq", "model": settings.llm_model_chat, "role": "fallback"},
         )
+        # The remaining configured Groq models follow, so a quota or
+        # rate-limit on one model does not stop the pipeline: the free tier
+        # budget is per model, not per account.
+        for model in settings.llm_model_chat_fallbacks:
+            if model == settings.llm_model_chat:
+                continue
+            chain.append(_groq_plugin.LLM(model=model, api_key=settings.groq_api_key))
+            log.info(
+                "notes llm chain",
+                extra={"provider": "groq", "model": model, "role": "fallback"},
+            )
 
     if not chain:
         raise LLMError(
@@ -311,12 +637,34 @@ def notes_llm_chain(*, segment: bool = False) -> list[Any]:
     return chain
 
 
+#: The field a batch request is wrapped in. LiveKit's plugins only convert a
+#: bare pydantic model into a provider schema, so ``list[Card]`` has to travel
+#: inside an object and be unwrapped again on the way back.
+_BATCH_FIELD = "items"
+
+
+def _as_request_schema(schema: Any) -> tuple[Any, bool]:
+    """Return the schema to send, and whether the reply needs unwrapping.
+
+    A plain pydantic model goes as-is. Anything else -- in practice
+    ``list[Model]``, but any annotation is allowed -- is sent as a
+    single-field envelope so every provider sees a shape it understands.
+    """
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        return schema, False
+
+    args = get_args(schema)
+    label = args[0].__name__ if len(args) == 1 and hasattr(args[0], "__name__") else "batch"
+    envelope = create_model(f"{label}Envelope", **{_BATCH_FIELD: (schema, ...)})
+    return envelope, True
+
+
 async def complete_json(
     llm: Any,
     *,
     prompt: str,
     system: str = "",
-    schema: type[BaseModel] | None = None,
+    schema: Any = None,
     max_output_tokens: int = 8192,
 ) -> LLMReply:
     """Run one non-streaming completion and parse a JSON reply.
@@ -325,16 +673,19 @@ async def complete_json(
     same code path works for either workload and the provider can be swapped
     without touching the pipeline.
 
-    ``schema`` is a pydantic model class. LiveKit's structured-output
-    plumbing requires a model (or a TypedDict); a raw JSON-schema dict is
-    explicitly unsupported, so the payloads are typed here instead.
+    ``schema`` is a pydantic model class, or an annotation of them such as
+    ``list[FlashcardPayload]``. A model goes to the provider unchanged; a
+    batch annotation is requested as a single-field envelope and unwrapped
+    before validation, because LiveKit converts only bare models.
     """
 
     chat_ctx = _build_context(system, prompt)
 
+    wrapped = False
     kwargs: dict[str, Any] = {"chat_ctx": chat_ctx}
     if schema is not None:
-        kwargs["response_format"] = schema
+        request_schema, wrapped = _as_request_schema(schema)
+        kwargs["response_format"] = request_schema
 
     try:
         stream = llm.chat(**kwargs)
@@ -350,6 +701,19 @@ async def complete_json(
     # error is reported here rather than surfacing as a confusing
     # KeyError deeper in the pipeline.
     data = _extract_json(text)
+    if wrapped:
+        if isinstance(data, dict) and _BATCH_FIELD in data:
+            data = data[_BATCH_FIELD]
+        elif not isinstance(data, list):
+            # A model that answered something other than the batch -- an
+            # object without the field, a string, a number -- is a shape
+            # failure. A bare list is accepted: some providers ignore the
+            # envelope and return the batch directly, which is still useful.
+            raise LLMError(
+                f"Model response did not match the required shape: expected "
+                f"an object with a '{_BATCH_FIELD}' field",
+                kind=ErrorKind.SHAPE,
+            )
     if schema is not None:
         try:
             if isinstance(schema, type) and issubclass(schema, BaseModel):
