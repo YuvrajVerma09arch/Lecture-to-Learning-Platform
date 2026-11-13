@@ -107,7 +107,13 @@ export const api = {
       `/api/flashcards?lecture_id=${encodeURIComponent(lectureId)}`,
     ),
 
-  reviewCard: (cardId: number, quality: number) =>
+  generateFlashcards: (lectureId: string, count = 20) =>
+    request<{ lecture_id: string; generated: number; added: number; total: number }>(
+      `/api/flashcards/lecture/${encodeURIComponent(lectureId)}?count=${count}`,
+      { method: "POST" },
+    ),
+
+  reviewCard: (cardId: string, quality: number) =>
     request<FlashcardReview>(`/api/flashcards/${cardId}/review`, {
       method: "POST",
       body: JSON.stringify({ quality }),

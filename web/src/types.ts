@@ -91,7 +91,7 @@ export interface LivekitToken {
 }
 
 export interface Flashcard {
-  id: number;
+  id: string;
   lecture_id: string;
   question: string;
   answer: string;
@@ -102,7 +102,7 @@ export interface Flashcard {
 }
 
 export interface FlashcardReview {
-  id: number;
+  id: string;
   repetitions: number;
   ease: number;
   interval_days: number;

@@ -50,7 +50,7 @@ export function LectureBar({
           id="lecture-picker"
           value={selectedId ?? ""}
           onChange={(event) => onSelect(event.target.value)}
-          className="min-w-0 flex-1 rounded-md border border-strong-line bg-white px-3 py-2 text-sm text-ink"
+          className="clay-inset min-w-0 flex-1 rounded-md border border-strong-line bg-white px-3 py-2 text-sm text-ink"
         >
           {lectures.map((lecture) => (
             <option key={lecture.id} value={lecture.id}>

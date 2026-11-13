@@ -10,6 +10,7 @@ import { LectureBar } from "./components/LectureBar";
 import { ErrorState } from "./components/States";
 import { useAsync } from "./hooks/useAsync";
 import { lectureParam, useRoute } from "./lib/router";
+import { Flashcards } from "./pages/Flashcards";
 import { Notes } from "./pages/Notes";
 
 // The chat screen pulls in the LiveKit client, which is a large
@@ -20,6 +21,7 @@ const Chat = lazy(() =>
 
 const NAV = [
   { path: "/notes", label: "Notes" },
+  { path: "/flashcards", label: "Flashcards" },
   { path: "/chat", label: "Doubt chat" },
 ];
 
@@ -35,11 +37,17 @@ export function App() {
     list[0]?.id ??
     null;
 
-  const path = route.path === "/chat" ? "/chat" : "/notes";
+  const path =
+    route.path === "/chat" || route.path === "/flashcards" ? route.path : "/notes";
 
   // A bare URL has no screen of its own; send it to the notes.
   useEffect(() => {
-    if (route.path !== "/" && route.path !== "/notes" && route.path !== "/chat") {
+    if (
+      route.path !== "/" &&
+      route.path !== "/notes" &&
+      route.path !== "/flashcards" &&
+      route.path !== "/chat"
+    ) {
       navigate("/notes", route.params.get("lecture") ? { lecture: route.params.get("lecture") as string } : undefined);
     }
   }, [route, navigate]);
@@ -90,6 +98,15 @@ export function App() {
             onNavigate={navigate}
           />
         </Suspense>
+      ) : path === "/flashcards" ? (
+        // Keyed on the lecture: switching lectures starts a fresh deck
+        // instead of showing the previous lecture's cards.
+        <Flashcards
+          key={selectedId ?? "none"}
+          lectureId={selectedId}
+          lectures={list}
+          onNavigate={navigate}
+        />
       ) : (
         <Notes
           lectureId={selectedId}

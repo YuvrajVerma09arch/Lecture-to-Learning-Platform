@@ -50,7 +50,7 @@ export function QuestionForm({
           maxLength={2000}
           placeholder="What did the teacher say about ..."
           aria-describedby="question-help"
-          className="mt-1 w-full rounded-md border border-strong-line bg-white px-3 py-2 text-sm text-ink"
+          className="clay-inset mt-1 w-full rounded-md border border-strong-line bg-white px-3 py-2 text-sm text-ink"
         />
         <p id="question-help" className="mt-1 text-xs text-muted">
           The answer is taken only from this lecture. If the lecture does not
@@ -60,7 +60,7 @@ export function QuestionForm({
           <button
             type="submit"
             disabled={pending || value.trim().length === 0}
-            className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink disabled:opacity-60"
+            className="clay-btn clay-accent rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink disabled:opacity-60"
           >
             {pending ? "Thinking…" : "Send"}
           </button>

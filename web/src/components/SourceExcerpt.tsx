@@ -18,7 +18,7 @@ export function SourceExcerpt({
   return (
     <div
       tabIndex={-1}
-      className="mt-2 rounded-md border border-line bg-canvas px-3 py-2"
+      className="clay-inset mt-2 rounded-md border border-line bg-canvas px-3 py-2"
     >
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">
         Transcript {formatTime(start)} to {formatTime(end)}

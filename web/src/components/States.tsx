@@ -12,7 +12,7 @@ export function LoadingState({ label }: { label: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="rounded-lg border border-line bg-white px-4 py-6 text-sm text-muted"
+      className="clay rounded-lg border border-line bg-white px-4 py-6 text-sm text-muted"
     >
       {label}
     </div>
@@ -29,7 +29,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-strong-line bg-white px-4 py-8 text-center">
+    <div className="clay clay-dashed rounded-lg border border-dashed border-strong-line bg-white px-4 py-8 text-center">
       <h2 className="text-base font-semibold text-ink">{title}</h2>
       <p className="mx-auto mt-2 max-w-prose text-sm text-muted">{body}</p>
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
@@ -51,7 +51,7 @@ export function ErrorState({
   return (
     <div
       role="alert"
-      className="rounded-lg border border-strong-line bg-white px-4 py-5"
+      className="clay rounded-lg border border-strong-line bg-white px-4 py-5"
     >
       <h2 className="text-base font-semibold text-ink">
         {offline ? "No connection" : "Something went wrong"}
@@ -61,7 +61,7 @@ export function ErrorState({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-4 rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+          className="clay-btn mt-4 rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
         >
           {retryLabel}
         </button>

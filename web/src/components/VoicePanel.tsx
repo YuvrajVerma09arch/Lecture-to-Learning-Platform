@@ -28,7 +28,7 @@ export function VoicePanel({
   return (
     <section
       aria-labelledby="voice-heading"
-      className="mt-4 rounded-lg border border-line bg-white p-3"
+      className="clay mt-4 rounded-lg border border-line bg-white p-3"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 id="voice-heading" className="text-sm font-semibold text-ink">
@@ -48,7 +48,7 @@ export function VoicePanel({
       <p
         aria-live="polite"
         aria-atomic="true"
-        className="mt-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm text-body"
+        className="clay-inset mt-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm text-body"
       >
         {state}
       </p>
@@ -84,7 +84,7 @@ export function VoicePanel({
           value={language}
           onChange={(event) => onLanguageChange(event.target.value)}
           disabled={languageLocked}
-          className="rounded-md border border-strong-line bg-white px-2 py-1.5 text-sm text-ink disabled:bg-canvas disabled:text-muted"
+          className="clay-inset rounded-md border border-strong-line bg-white px-2 py-1.5 text-sm text-ink disabled:bg-canvas disabled:text-muted"
         >
           {SESSION_LANGUAGES.map(({ code, label }) => (
             <option key={code} value={code}>
@@ -99,7 +99,7 @@ export function VoicePanel({
           <button
             type="button"
             onClick={() => void room.start()}
-            className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink"
+            className="clay-btn clay-accent rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink"
           >
             Start voice
           </button>
@@ -108,7 +108,7 @@ export function VoicePanel({
           <button
             type="button"
             onClick={() => void room.stop()}
-            className="rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink"
+            className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink"
           >
             Cancel
           </button>
@@ -118,14 +118,14 @@ export function VoicePanel({
             <button
               type="button"
               onClick={() => void room.toggleMic()}
-              className="rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
             >
               {room.micEnabled ? "Mute microphone" : "Unmute microphone"}
             </button>
             <button
               type="button"
               onClick={() => void room.stop()}
-              className="rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
             >
               Stop voice
             </button>

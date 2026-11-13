@@ -136,7 +136,7 @@ export function Notes({
             {lecture && lecture.audio_seconds ? " · " : ""}
             {payload.segments.length} transcript segments
           </p>
-          <div className="mt-2 rounded-lg border border-line bg-white px-4 py-5 sm:px-6">
+          <div className="clay mt-2 rounded-lg border border-line bg-white px-4 py-5 sm:px-6">
             <NotesDocument
               markdown={payload.document}
               segments={payload.segments}
@@ -156,7 +156,7 @@ export function Notes({
                   lecture: lectureId,
                 })
               }
-              className="mt-3 w-full rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="clay-btn mt-3 w-full rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
             >
               Ask a doubt about this lecture
             </button>

@@ -62,7 +62,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
   return (
     <nav
       aria-label="Table of contents"
-      className="rounded-lg border border-line bg-white"
+      className="clay rounded-lg border border-line bg-white"
     >
       <button
         type="button"

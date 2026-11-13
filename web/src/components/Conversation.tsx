@@ -36,7 +36,7 @@ export function Conversation({
       </h2>
       <div className="mt-2 space-y-3">
         {items.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-strong-line bg-white px-4 py-6 text-sm text-muted">
+          <p className="clay clay-dashed rounded-lg border border-dashed border-strong-line bg-white px-4 py-6 text-sm text-muted">
             Nothing has been said yet. Start the voice tutor to speak, or type
             a question below.
           </p>
@@ -46,7 +46,7 @@ export function Conversation({
             return (
               <div
                 key={item.id}
-                className="rounded-lg border border-line bg-canvas px-3 py-2"
+                className="clay-inset rounded-lg border border-line bg-canvas px-3 py-2"
               >
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                   You
@@ -69,8 +69,8 @@ export function Conversation({
               key={item.id}
               className={`rounded-lg border px-3 py-2 ${
                 item.speaker === "student"
-                  ? "border-line bg-canvas"
-                  : "border-accent bg-white"
+                  ? "clay-inset border-line bg-canvas"
+                  : "clay clay-rim-accent border-accent bg-white"
               }`}
             >
               <p className="text-xs font-semibold uppercase tracking-wide text-muted">

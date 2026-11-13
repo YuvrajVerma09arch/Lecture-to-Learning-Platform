@@ -4,6 +4,10 @@
  * One accent colour, a neutral ink scale and nothing else. The
  * Devanagari and Gujarati faces are self-hosted, so they are listed
  * after the system font and are only used for the scripts they cover.
+ *
+ * The palette is tuned for claymorphism: a warmer canvas so the white
+ * surfaces read as soft blocks resting on it, and a line colour light
+ * enough that the shadows (not the borders) do the separating.
  */
 @theme {
   --color-accent: #0f766e;
@@ -13,7 +17,7 @@
   --color-muted: #4b5563;
   --color-line: #e5e7eb;
   --color-strong-line: #d1d5db;
-  --color-canvas: #f6f7f9;
+  --color-canvas: #eef0f5;
 
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans",
     "Noto Sans Devanagari", "Noto Sans Gujarati", "Noto Sans Telugu",
@@ -28,6 +32,18 @@
   body {
     margin: 0;
     background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(
+        circle at 15% 0%,
+        color-mix(in srgb, var(--color-accent) 7%, transparent),
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 85% 100%,
+        color-mix(in srgb, var(--color-accent) 5%, transparent),
+        transparent 40%
+      );
+    background-attachment: fixed;
     color: var(--color-body);
     font-family: var(--font-sans);
     line-height: 1.6;
@@ -40,6 +56,110 @@
 
   ::selection {
     background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  }
+}
+
+/*
+ * Claymorphism.
+ *
+ * Soft blocks resting on a soft surface: a large radius, a drop shadow
+ * below and a light rim above, so the shape comes from light rather
+ * than from a stroke. These rules are deliberately unlayered, so they
+ * win over the flat utility classes (border, rounded-lg, bg-white)
+ * that the components already carry; nothing has to be removed for
+ * them to take effect, and a component without the class still renders
+ * exactly as before.
+ */
+.clay {
+  border-radius: 1.25rem;
+  /* The rim colour only: the element's own border utilities keep their
+     width and style (a dashed empty state stays dashed). */
+  border-color: rgba(255, 255, 255, 0.7);
+  background: linear-gradient(145deg, #ffffff 0%, #f7f8fb 100%);
+  box-shadow:
+    10px 10px 24px color-mix(in srgb, var(--color-ink) 8%, transparent),
+    -6px -6px 16px rgba(255, 255, 255, 0.9),
+    inset 1px 1px 2px rgba(255, 255, 255, 0.95);
+}
+
+/* The dashed "nothing here yet" outline keeps its grey dashes. */
+.clay-dashed {
+  border-color: var(--color-strong-line);
+}
+
+/* An accent-rimmed block (the tutor's answers): the same light, with
+   the rim tinted so the card still reads as the tutor speaking. */
+.clay-rim-accent {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, white);
+}
+
+/* A block sitting lower: inputs, transcript wells, quoted excerpts. */
+.clay-inset {
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: linear-gradient(145deg, #f1f3f7 0%, #fafbfd 100%);
+  box-shadow:
+    inset 4px 4px 10px color-mix(in srgb, var(--color-ink) 7%, transparent),
+    inset -3px -3px 8px rgba(255, 255, 255, 0.95);
+}
+
+/* A raised pill: it presses down when held. */
+.clay-btn {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  box-shadow:
+    5px 5px 12px color-mix(in srgb, var(--color-ink) 9%, transparent),
+    -4px -4px 10px rgba(255, 255, 255, 0.9),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.85);
+  transition:
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.clay-btn:hover:not(:disabled) {
+  box-shadow:
+    7px 7px 16px color-mix(in srgb, var(--color-ink) 10%, transparent),
+    -5px -5px 12px rgba(255, 255, 255, 0.95),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.85);
+}
+
+.clay-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 4px 4px 9px color-mix(in srgb, var(--color-ink) 10%, transparent),
+    inset -3px -3px 7px rgba(255, 255, 255, 0.9);
+}
+
+/* The accent buttons keep their colour; only the light changes. */
+.clay-accent {
+  background: linear-gradient(145deg, #14b8a6 0%, var(--color-accent) 100%);
+  color: #ffffff;
+}
+
+.clay-accent:hover:not(:disabled) {
+  background: linear-gradient(145deg, var(--color-accent) 0%, var(--color-accent-ink) 100%);
+}
+
+/* Nav pills in the header sit flush: same light, no drop. */
+.clay-nav {
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+}
+
+/* The sticky header: a soft block with light under it, not a ruled line. */
+.clay-bar {
+  border-bottom: none;
+  background: linear-gradient(145deg, #ffffff 0%, #f7f8fb 100%);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clay-btn {
+    transition: none;
+  }
+
+  .clay-btn:active:not(:disabled) {
+    transform: none;
   }
 }
 

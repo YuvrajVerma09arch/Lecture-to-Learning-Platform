@@ -112,7 +112,7 @@ function Paragraph({ node, children }: { node?: HastNode; children?: ReactNode }
         data-source-start={span.start}
         onClick={() => onToggleSource(span)}
         aria-expanded={active}
-        className="inline-flex items-center gap-2 rounded-md border border-strong-line bg-canvas px-2.5 py-1.5 text-sm font-medium text-accent-ink hover:bg-white"
+        className="clay-btn inline-flex items-center gap-2 rounded-md border border-strong-line bg-canvas px-2.5 py-1.5 text-sm font-medium text-accent-ink hover:bg-white"
       >
         <span aria-hidden="true">{active ? "▾" : "▸"}</span>
         <span>
@@ -193,7 +193,7 @@ const COMPONENTS = {
   blockquote: Blockquote,
   code: Code,
   pre: ({ children }: { children?: ReactNode }) => (
-    <pre className="mt-4 overflow-x-auto rounded-md border border-line bg-canvas p-3 text-sm">
+    <pre className="clay-inset mt-4 overflow-x-auto rounded-md border border-line bg-canvas p-3 text-sm">
       {children}
     </pre>
   ),

@@ -10,7 +10,7 @@ export function ChatAnswerCard({
   onOpenSource: (seconds: number) => void;
 }) {
   return (
-    <div className="rounded-lg border border-accent bg-white px-3 py-3">
+    <div className="clay clay-rim-accent rounded-lg border border-accent bg-white px-3 py-3">
       <p className="text-sm leading-6 text-body">{answer.answer}</p>
 
       {answer.note ? (

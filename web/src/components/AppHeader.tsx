@@ -14,7 +14,7 @@ export function AppHeader({
   onNavigate: (path: string) => void;
 }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-white">
+    <header className="clay-bar sticky top-0 z-30 border-b border-line bg-white">
       <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
         <span className="text-base font-semibold tracking-tight text-ink">
           Gnani
@@ -29,9 +29,9 @@ export function AppHeader({
                     type="button"
                     onClick={() => onNavigate(item.path)}
                     aria-current={active ? "page" : undefined}
-                    className={`rounded-md px-3 py-2 text-sm font-medium ${
+                    className={`clay-nav clay-btn rounded-md px-3 py-2 text-sm font-medium ${
                       active
-                        ? "bg-accent text-white"
+                        ? "clay-accent bg-accent text-white"
                         : "text-body hover:bg-canvas"
                     }`}
                   >
