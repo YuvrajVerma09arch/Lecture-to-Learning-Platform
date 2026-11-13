@@ -303,6 +303,28 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             for table in DERIVED_TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {table}")
 
+            # Every derived row is gone, so a lecture that claimed to be
+            # ready has no notes or flashcards left to show. Park those as
+            # failed at the segment stage instead of letting the UI call
+            # them ready: the transcript table survived, so uploading the
+            # original recording again rebuilds everything from the cache
+            # without paying for transcription a second time.
+            conn.execute(
+                """UPDATE lectures
+                   SET status=?, failed_stage=?, failure_reason=?, updated_at=?
+                   WHERE status=?""",
+                (
+                    STATUS_FAILED,
+                    STAGE_SEGMENT,
+                    "The database schema changed and this lecture's notes and "
+                    "flashcards were cleared. Upload the original recording "
+                    "again to rebuild them from the saved transcript; the "
+                    "audio is not transcribed again.",
+                    now(),
+                    STATUS_READY,
+                ),
+            )
+
     conn.executescript(SCHEMA)
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))

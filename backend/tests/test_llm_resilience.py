@@ -173,11 +173,15 @@ class TestChainConstruction:
     def test_the_chain_prefers_google_then_groq(self, monkeypatch):
         self._settings(monkeypatch, google_api_key="k", groq_api_key="k")
         chain = factory.notes_llm_chain(segment=True)
-        assert len(chain) == 2
+        # Google first, then the chat model, then its Groq fallbacks: the
+        # free-tier budget is per model, so more entries means more headroom.
+        assert len(chain) >= 2
         # The plugins report different `provider` strings, so identify them
         # by the model they were built with.
         assert chain[0].model.startswith("gemini")
         assert chain[1].model == settings_model()
+        models = [llm.model for llm in chain]
+        assert len(models) == len(set(models)), "no duplicate models in the chain"
 
     def test_the_chain_works_with_one_provider(self, monkeypatch):
         self._settings(monkeypatch, google_api_key="k")
@@ -188,8 +192,11 @@ class TestChainConstruction:
     def test_groq_only(self, monkeypatch):
         self._settings(monkeypatch, groq_api_key="k")
         chain = factory.notes_llm_chain(segment=True)
-        assert len(chain) == 1
+        assert len(chain) >= 1
         assert "/" in chain[0].model, "the groq model id contains a provider prefix"
+        # The primary chat model leads, so a rate limit on it can fall
+        # through to the other configured Groq models.
+        assert chain[0].model == settings_model()
 
     def test_no_provider_raises(self, monkeypatch):
         self._settings(monkeypatch)

@@ -173,6 +173,14 @@ class TestFullPipeline:
         assert second.credits_estimated == 0.0
         # And it reuses the same transcript.
         assert second.transcript == first.transcript
+        # A cache hit must not mint a second lecture row for the same
+        # audio either: the lookup has to match what the insert stores
+        # (the source file hash), or every re-upload duplicates the
+        # lecture in the sidebar.
+        assert second.lecture_id == first.lecture_id
+        with db_mod.get_conn() as conn:
+            rows = conn.execute("SELECT id FROM lectures").fetchall()
+            assert len(rows) == 1
 
 
 class TestFailureIsolation:

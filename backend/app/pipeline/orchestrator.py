@@ -127,9 +127,18 @@ async def run_notes_pipeline(
             timings["transcribe"] = 0.0
 
             # Find or create the lecture row for this content.
+            #
+            # The lookup must match what the INSERT below writes: the
+            # lecture table keys on the *source* file hash, not on the
+            # transcript cache key (which also folds in the language and
+            # model). Matching the cache key would never hit, and every
+            # re-upload would create a second lecture row for the same
+            # audio. The language is part of the key because the derived
+            # rows are built from a transcript in that language.
             row = conn.execute(
-                "SELECT id FROM lectures WHERE content_hash=? ORDER BY created_at LIMIT 1",
-                (digest,),
+                "SELECT id FROM lectures WHERE content_hash=? AND language_code=? "
+                "ORDER BY created_at LIMIT 1",
+                (source_hash, language_code),
             ).fetchone()
             if row is not None:
                 lecture_id = row["id"]
