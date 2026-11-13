@@ -346,6 +346,30 @@ def _drop_leading_narration(text: str) -> str:
     return " ".join(rest).strip()
 
 
+def strip_markup(text: str) -> str:
+    """Strip citations, markdown, emoji and excess whitespace.
+
+    The mechanical half of ``clean_speech_text``: everything a voice
+    would trip over (a citation read as "bracket one", ``**bold**`` as
+    "star star bold", an emoji as "slightly smiling face") and the
+    whitespace those leave behind. What comes back is flat text, which
+    is what both a spoken answer and one streamed sentence at a time
+    need.
+    """
+    out = strip_citations(text)
+    out = _MARKDOWN_BOLD.sub(r"\1", out)
+    out = _MARKDOWN_ITALIC.sub(r"\1", out)
+    out = _MARKDOWN_CODE.sub(r"\1", out)
+    out = _MARKDOWN_LINK.sub(r"\1", out)
+    out = _MARKDOWN_NOISE.sub("", out)
+    out = _BULLET.sub("", out)
+    out = out.replace("**", "")
+    out = _EMOJI.sub(" ", out)
+    out = re.sub(r"[ \t]*\n[ \t]*", " ", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return out.strip()
+
+
 def clean_speech_text(text: str, *, max_words: int = MAX_ANSWER_WORDS) -> str:
     """Make a model answer safe to show and to speak.
 
@@ -360,17 +384,7 @@ def clean_speech_text(text: str, *, max_words: int = MAX_ANSWER_WORDS) -> str:
     if not text or not text.strip():
         return text
 
-    out = strip_citations(text)
-    out = _MARKDOWN_BOLD.sub(r"\1", out)
-    out = _MARKDOWN_ITALIC.sub(r"\1", out)
-    out = _MARKDOWN_CODE.sub(r"\1", out)
-    out = _MARKDOWN_LINK.sub(r"\1", out)
-    out = _MARKDOWN_NOISE.sub("", out)
-    out = _BULLET.sub("", out)
-    out = out.replace("**", "")
-    out = _EMOJI.sub(" ", out)
-    out = re.sub(r"[ \t]*\n[ \t]*", " ", out)
-    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    out = strip_markup(text)
     out = _LEADING_FILLER.sub("", out, count=1)
     out = _drop_leading_narration(out)
     out = out.strip()

@@ -363,3 +363,114 @@ class TestSessionConstruction:
         assert await drain(1.0) == ["Namaste. This is ek test sentence."]
         stream.end_input()
         assert await drain(1.0) == [" Aur ek "]
+
+
+async def _cleaned(chunks: list[str]) -> list[str]:
+    """Push each chunk through the streaming cleaner; return what leaves."""
+    async def source():
+        for chunk in chunks:
+            yield chunk
+
+    return [piece async for piece in tutor._clean_stream(source())]
+
+
+class TestStreamingCleaner:
+    """What the student hears and reads is cleaned sentence by sentence."""
+
+    async def test_leading_narration_is_dropped_before_the_answer(self):
+        out = await _cleaned(
+            [
+                "The student asked what karma is. ",
+                "Karma means action. ",
+                "It bears fruit later.",
+            ]
+        )
+        # The preamble is gone; the answer is intact, in order.
+        assert out == ["Karma means action. ", "It bears fruit later. "]
+
+    async def test_a_fourth_narration_sentence_is_kept(self):
+        # The batch cleaner drops at most three leading narration
+        # sentences; the fourth one is part of the reply, so the stream
+        # has to agree with it.
+        out = await _cleaned(
+            [
+                "The student asked one. ",
+                "The student wants two. ",
+                "The student said three. ",
+                "Let me check four. ",
+                "Real answer.",
+            ]
+        )
+        assert out == ["Let me check four. ", "Real answer. "]
+
+    async def test_an_all_narration_answer_is_kept_rather_than_silenced(self):
+        out = await _cleaned(
+            [
+                "The student asked one. ",
+                "The student wants two. ",
+                "The student said three.",
+            ]
+        )
+        # Nothing better arrived; an answer no worse than empty is the
+        # rule the batch cleaner follows too.
+        assert out == [
+            "The student asked one. ",
+            "The student wants two. ",
+            "The student said three. ",
+        ]
+
+    async def test_markup_and_emoji_never_reach_the_voice(self):
+        out = await _cleaned(["**Bold** \U0001f642 [1] answer."])
+        assert out == ["Bold answer. "]
+
+    async def test_a_single_over_long_sentence_is_capped_at_sixty_words(self):
+        sentence = " ".join(f"w{i}" for i in range(71)) + "."
+        out = await _cleaned([sentence])
+        # Exactly the cap, one clean stop: no partial word, no silence.
+        assert len(out) == 1
+        assert len(out[0].split()) == 60
+
+    async def test_a_sentence_over_the_cap_is_dropped_whole(self):
+        first = " ".join(f"A{i}" for i in range(50)) + "."
+        second = " ".join(f"b{i}" for i in range(30)) + "."
+        out = await _cleaned([first + " ", second])
+        # The cap lands on the first sentence's full stop, so the second
+        # sentence never leaks in half-finished.
+        assert out == [first + " "]
+
+    async def test_a_filler_opening_is_stripped_and_the_answer_capitalized(self):
+        out = await _cleaned(["Sure, the sun is a star."])
+        assert out == ["The sun is a star. "]
+
+    async def test_the_sentence_split_follows_the_students_script(self):
+        out = await _cleaned(["ચંદ્ર એટલે શું। ", "ચંદ્રએ પૃથ્વીનું ઉપગ્રહ છે."])
+        # Split at the danda, not at an ASCII full stop.
+        assert out == ["ચંદ્ર એટલે શું। ", "ચંદ્રએ પૃથ્વીનું ઉપગ્રહ છે. "]
+
+    async def test_sentences_join_with_a_single_space(self):
+        out = await _cleaned(["The score was 42. ", "Next it rose to 43."])
+        # Concatenated, the pieces read as one sentence flow: no
+        # "42.Next" and no double space.
+        assert "".join(out) == "The score was 42. Next it rose to 43. "
+
+    async def test_an_all_markup_answer_falls_back_to_the_raw_text(self):
+        out = await _cleaned(["###"])
+        # Cleaning to nothing would leave the student with silence, so
+        # the original is what goes out.
+        assert out == ["###"]
+
+    def test_the_built_agent_cleans_speech_as_it_streams(self):
+        agent = tutor.build_agent(tutor.TutorState(lecture_id="lec_1"))
+        assert isinstance(agent, tutor.CleanSpeechAgent)
+
+    async def test_the_transcription_node_cleans_what_the_student_reads(self):
+        # The on-screen transcript goes through transcription_node, not
+        # the TTS path, so it is cleaned here or not at all.
+        agent = tutor.build_agent(tutor.TutorState(lecture_id="lec_1"))
+
+        async def source():
+            yield "Let me think. The "
+            yield "answer is 7."
+
+        out = [piece async for piece in agent.transcription_node(source(), tutor.ModelSettings())]
+        assert out == ["The answer is 7. "]

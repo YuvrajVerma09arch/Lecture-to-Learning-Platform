@@ -43,6 +43,7 @@ from livekit.agents.voice import AgentSession  # noqa: E402
 from livekit.agents.voice.room_io import RoomOptions  # noqa: E402
 
 from app.logging_setup import configure_logging, get_logger  # noqa: E402
+from app.retrieval import rerank  # noqa: E402
 
 from .tutor import (  # noqa: E402
     AGENT_NAME,
@@ -166,7 +167,9 @@ async def publish_markers(
         state.timings.llm_complete = time.monotonic()
         _publish(ctx, {"type": "turn_timings", **state.timings.to_dict()})
         if text := getattr(item, "text_content", None):
-            _publish(ctx, {"type": "assistant_text", "text": text})
+            # The chat bubble shows what the tutor *says*: no citations,
+            # markup, emoji or preamble, same as the voice.
+            _publish(ctx, {"type": "assistant_text", "text": rerank.clean_speech_text(str(text))})
 
     @session.on("metrics_collected")
     def _on_metrics(ev: Any) -> None:

@@ -19,14 +19,17 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, field
 from typing import Any
 
 # The LiveKit plugins register themselves at import time, and the
 # registration is rejected from a worker thread. Importing them here, at
 # module level, keeps that on the main thread.
+from livekit import rtc
 from livekit.agents import Agent, inference, stt, tokenize, tts
 from livekit.agents.llm import function_tool
+from livekit.agents.voice import ModelSettings
 from livekit.plugins import gnani
 
 from app.config import get_settings
@@ -341,6 +344,161 @@ def make_lookup_tool(state: TutorState) -> Any:
 
 
 # --------------------------------------------------------------------------
+# The spoken answer, cleaned while it streams
+# --------------------------------------------------------------------------
+
+#: A sentence-ending mark with any closing quotes or brackets after it,
+#: but only where whitespace follows -- so the ``3.`` of a number split
+#: across chunks is not mistaken for an end. There is deliberately no
+#: end-of-string anchor: the last sentence has no trailing space, so it
+#: is flushed from the buffer instead of matched here.
+_SENTENCE_END = re.compile(r"[.!?।॥][\"')\]]*(?=\s)")
+
+#: How many leading narration sentences may be buffered before the
+#: cleaner gives up on them. The same limit ``rerank`` applies to a
+#: whole answer: three is the point at which "the tutor thinking out
+#: loud" stops being a preamble and starts being the reply.
+_MAX_HELD_NARRATION = 3
+
+
+async def _clean_stream(source: AsyncIterable[Any]) -> AsyncGenerator[str, None]:
+    """Rewrite a streaming answer into sentences worth speaking.
+
+    The model's text arrives in arbitrary chunks and carries two kinds
+    of noise: markup (which the TTS path strips downstream, but the
+    transcription path does not) and narration -- sentences about the
+    model's own work instead of the answer. Buffering *by sentence*
+    removes both without buffering the whole answer, so the first
+    audible sentence still starts as early as the LLM produces it.
+
+    The rules mirror ``rerank.clean_speech_text``: leading narration is
+    dropped while real content follows, an all-narration answer is kept
+    rather than silenced, and the answer stops at
+    ``rerank.MAX_ANSWER_WORDS``. Every emitted piece ends in a space:
+    the sentence tokenizer downstream concatenates pushes verbatim, and
+    stripped sentences would otherwise glue together.
+    """
+    pending = ""
+    held: list[str] = []
+    raw: list[str] = []
+    emitted = ""
+    emitted_words = 0
+    emitted_any = False
+    sticky = False
+    stopped = False
+    filler_done = False
+
+    def _emit(sentence: str) -> list[str]:
+        """Turn one accepted sentence into the pieces to push out."""
+        nonlocal emitted, emitted_words, emitted_any, stopped
+        if not emitted_any and sentence[:1].islower():
+            # Dropping a filler can leave the answer starting lower-case.
+            sentence = sentence[:1].upper() + sentence[1:]
+        candidate = f"{emitted} {sentence}".strip()
+        if len(candidate.split()) > rerank.MAX_ANSWER_WORDS:
+            capped = rerank._cap_words(candidate, rerank.MAX_ANSWER_WORDS)
+            rest = capped.split()[emitted_words:]
+            stopped = True
+            emitted_any = True
+            if not rest:
+                return []
+            piece = " ".join(rest)
+            emitted = f"{emitted} {piece}".strip()
+            emitted_words = len(emitted.split())
+            return [piece + " "]
+        emitted = candidate
+        emitted_words = len(emitted.split())
+        emitted_any = True
+        return [sentence + " "]
+
+    def _take(sentence: str) -> list[str]:
+        """Clean one raw sentence and decide whether it is said."""
+        nonlocal sticky, filler_done
+        sentence = rerank.strip_markup(sentence)
+        if not sentence:
+            return []
+        if not filler_done:
+            filler_done = True
+            sentence = rerank._LEADING_FILLER.sub("", sentence, count=1).strip()
+            if not sentence:
+                return []
+        if not sticky and len(held) < _MAX_HELD_NARRATION and rerank._NARRATION.match(
+            sentence
+        ):
+            held.append(sentence)
+            return []
+        # Either real content arrived or the preamble ran long: the
+        # buffer is spent, and everything from here is the answer.
+        held.clear()
+        sticky = True
+        return _emit(sentence)
+
+    async for chunk in source:
+        text = str(chunk)
+        if not text:
+            continue
+        if stopped:
+            # The answer is complete; still drain the source, because
+            # nothing else may be pulling it and a stalled producer
+            # would hang the session.
+            continue
+        if not emitted_any:
+            raw.append(text)
+        pending += text
+        while not stopped:
+            match = _SENTENCE_END.search(pending)
+            if match is None:
+                break
+            sentence, pending = pending[: match.end()], pending[match.end() :]
+            for piece in _take(sentence):
+                yield piece
+
+    if not stopped and pending.strip():
+        # The tail is the final sentence: no trailing space to match.
+        for piece in _take(pending.strip()):
+            yield piece
+    if not sticky:
+        # Nothing but narration ever arrived. It is no worse than an
+        # empty answer, so it is what goes out.
+        for sentence in held:
+            if stopped:
+                break
+            for piece in _emit(sentence):
+                yield piece
+    if not emitted_any:
+        text = "".join(raw).strip()
+        if text:
+            # Everything was markup or emoji. The original is at least
+            # readable, so hand that back rather than nothing.
+            yield text
+
+
+class CleanSpeechAgent(Agent):
+    """An agent whose spoken and transcribed text is cleaned as it streams.
+
+    Two nodes see the model's raw text: ``tts_node`` feeds the voice,
+    ``transcription_node`` feeds the on-screen transcript. Both are
+    rewritten here, sentence by sentence, so a student hears and reads
+    the same answer -- no markup, no emoji, no narration of the model's
+    own work.
+
+    ``use_tts_aligned_transcript`` stays off: this cleaner rewrites the
+    stream, so word-level alignment against the original text no longer
+    means anything.
+    """
+
+    def tts_node(
+        self, text: AsyncIterable[Any], model_settings: ModelSettings
+    ) -> AsyncIterable[rtc.AudioFrame]:
+        return Agent.default.tts_node(self, _clean_stream(text), model_settings)
+
+    def transcription_node(
+        self, text: AsyncIterable[Any], model_settings: ModelSettings
+    ) -> AsyncIterable[str]:
+        return _clean_stream(text)
+
+
+# --------------------------------------------------------------------------
 # The session
 # --------------------------------------------------------------------------
 
@@ -440,7 +598,7 @@ def build_session(state: TutorState) -> Any:
 
 def build_agent(state: TutorState) -> Agent:
     """The agent itself."""
-    return Agent(
+    return CleanSpeechAgent(
         instructions=INSTRUCTIONS,
         tools=[make_lookup_tool(state)],
     )
