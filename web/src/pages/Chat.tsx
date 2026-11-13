@@ -100,6 +100,7 @@ export function Chat({
   if (!lectureId) {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Doubt chat</h1>
         <EmptyState
           title="Choose a lecture"
           body="Pick a lecture above. The tutor answers only about the lecture that is selected."

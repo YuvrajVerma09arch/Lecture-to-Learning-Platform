@@ -80,6 +80,7 @@ export function Notes({
   if (!lectureId) {
     return (
       <main id="main" className="mx-auto max-w-5xl px-4 py-6">
+        <h1 className="sr-only">Notes</h1>
         <EmptyState
           title="Choose a lecture"
           body="Pick a lecture above to read its notes. Each lecture is a recording that has already been transcribed and turned into study notes."
@@ -91,6 +92,7 @@ export function Notes({
   if (notes.status === "loading") {
     return (
       <main id="main" className="mx-auto max-w-5xl px-4 py-6">
+        <h1 className="sr-only">Notes</h1>
         <LoadingState label="Loading the notes" />
       </main>
     );
@@ -99,6 +101,7 @@ export function Notes({
   if (notes.status === "error" && notes.error) {
     return (
       <main id="main" className="mx-auto max-w-5xl px-4 py-6">
+        <h1 className="sr-only">Notes</h1>
         <ErrorState error={notes.error} onRetry={notes.reload} />
       </main>
     );
@@ -109,6 +112,7 @@ export function Notes({
     const failed = lecture?.status === "failed";
     return (
       <main id="main" className="mx-auto max-w-5xl px-4 py-6">
+        <h1 className="sr-only">Notes</h1>
         <EmptyState
           title={failed ? "This lecture did not finish" : "The notes are not ready yet"}
           body={

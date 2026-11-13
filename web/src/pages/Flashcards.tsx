@@ -108,6 +108,7 @@ export function Flashcards({
   if (!lectureId) {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Flashcards</h1>
         <EmptyState
           title="Choose a lecture"
           body="Pick a lecture above to make flashcards from it. Each card asks about something the recording actually said."
@@ -119,6 +120,7 @@ export function Flashcards({
   if (cards.status === "loading") {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Flashcards</h1>
         <LoadingState
           label={generating ? "Writing flashcards from this lecture" : "Loading the flashcards"}
         />
@@ -129,6 +131,7 @@ export function Flashcards({
   if (cards.status === "error" && cards.error) {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Flashcards</h1>
         <ErrorState error={cards.error} onRetry={cards.reload} />
       </main>
     );
@@ -138,6 +141,7 @@ export function Flashcards({
     const failed = lecture?.status === "failed";
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Flashcards</h1>
         {error ? (
           <div className="mb-4">
             <ErrorState error={error} onRetry={generate} retryLabel="Try again" />
@@ -206,6 +210,7 @@ export function Flashcards({
   if (phase === "done") {
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
+        <h1 className="sr-only">Flashcards</h1>
         <EmptyState
           title="Round complete"
           body={`You graded all ${deck.length} cards. Each one now has its next date; the due cards return here when that date arrives.`}

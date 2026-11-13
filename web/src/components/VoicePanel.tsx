@@ -159,7 +159,7 @@ function describeState(room: LiveKitRoom): string {
   if (room.status === "connecting") return "Connecting to the tutor.";
   if (room.status === "reconnecting") return "Reconnecting to the tutor.";
   if (room.status === "error") {
-    return "The voice room stopped. Use the buttons above to retry.";
+    return "The voice room stopped. Use the retry button below to reconnect.";
   }
   if (room.status === "idle") {
     return "Not connected. Start the voice tutor to ask out loud.";

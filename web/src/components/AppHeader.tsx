@@ -17,7 +17,7 @@ export function AppHeader({
     <header className="clay-bar sticky top-0 z-30 border-b border-line bg-white">
       <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
         <span className="text-base font-semibold tracking-tight text-ink">
-          Gnani
+          Lecture to Learning
         </span>
         <nav aria-label="Main" className="ml-auto">
           <ul className="flex items-center gap-1">
