@@ -94,6 +94,28 @@ path. This is a measured optimisation, not a guess — see §3.
 - The text is **unpunctuated and uncapitalised**, consistent with the
   documented behaviour. Normalisation is therefore a real pipeline stage.
 
+### 1.7 `lang_code` is an instruction, not a detector — no auto-detect
+Measured with `scripts/probe_lang_detect.py`: four clips (Hindi,
+English, Telugu, and a cached Hinglish bench clip) streamed under
+different `lang_code` values, and the output script classified:
+
+| `lang_code` | Result |
+|---|---|
+| `en-IN` | **Everything Latin** — Hindi audio comes back transliterated ("meri mummy se baat karo"). This is why a student speaking Hindi saw Latin transcripts. |
+| `hi-IN` | **Everything Devanagari** — even the English clip came back as "वेलकम टू दी लेक्चर…". |
+| `te-IN` | **Everything Telugu script**, regardless of the audio. |
+| `en-IN,hi-IN` (comma pair) | **Rejected** — WebSocket close 1008 (policy violation). |
+| Longer comma list | **Rejected** — close 1008. |
+| `auto` | **Rejected** — close 1008. Not an STT value at all. |
+
+**Consequence:** the code forces the script for the whole connection;
+there is no server-side language detection to fall back on. The session
+language must be chosen before the socket opens — the browser sends it
+in `POST /api/livekit/token`, the token carries it as room metadata, and
+the worker reads it via `language_for_room()` (`agent/tutor.py`).
+The plugin's advertised `"en-IN,hi-IN"` pair in its type hints is dead:
+the server refuses it.
+
 ---
 
 ## 2. Batch STT — `POST /stt/v3/batch/jobs`

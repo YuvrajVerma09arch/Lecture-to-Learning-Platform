@@ -24,7 +24,7 @@ backend/app/          FastAPI application
   pipeline/           ingest -> transcribe -> segment -> note -> merge
   retrieval/          FTS5 + embeddings (hybrid search), grounded reranking
   llm/                provider-neutral model access, error classification
-backend/tests/        264 tests, all offline
+backend/tests/        271 tests, all offline
 agent/                the LiveKit agent worker and the STT subclass
   bench/              the latency benchmark harness
 web/                  Vite + React + TypeScript front end
@@ -174,7 +174,7 @@ Interactive API documentation is at `http://127.0.0.1:8000/docs`.
 | `GET` | `/api/flashcards` | The flashcards, optionally `?due_only=true` |
 | `POST` | `/api/flashcards/lecture/{id}` | Generate flashcards from a lecture's notes |
 | `POST` | `/api/flashcards/{id}/review` | Record a review and schedule the next one. Body: `{"quality": 0-5}` |
-| `POST` | `/api/livekit/token` | Mint a room token for a lecture. Body: `{"lecture_id": "...", "participant_name": "..."}` |
+| `POST` | `/api/livekit/token` | Mint a room token for a lecture. Body: `{"lecture_id": "...", "participant_name": "...", "language": "hi-IN"}` (`language` optional, defaults to the lecture's language; one of the ten supported codes, else 422) |
 
 ### The front end
 
@@ -248,6 +248,7 @@ deliberately.
 
 ```bash
 PYTHONPATH=backend .venv/bin/python scripts/probe_stt.py         # streaming STT
+PYTHONPATH=backend .venv/bin/python scripts/probe_lang_detect.py # lang_code -> script mapping
 PYTHONPATH=backend .venv/bin/python scripts/probe_batch.py       # batch STT
 PYTHONPATH=backend .venv/bin/python scripts/probe_llm_models.py  # LLM reachability
 PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py   # turn-taking sweep
@@ -259,7 +260,7 @@ PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py   # turn-taking s
 .venv/bin/python -m pytest -q
 ```
 
-264 tests, all passing, in about a minute. **No test calls a remote API.**
+271 tests, all passing, in about a minute. **No test calls a remote API.**
 The Gnani and LLM clients are replaced with fakes, every test gets its own
 temporary SQLite file and cache directory, and the retry delays are shortened.
 A test that does exercise the live API is marked `@pytest.mark.live` and is
@@ -295,6 +296,7 @@ of each model — are in the probe scripts, which call the live APIs:
 
 ```bash
 PYTHONPATH=backend .venv/bin/python scripts/probe_stt.py         # streaming STT
+PYTHONPATH=backend .venv/bin/python scripts/probe_lang_detect.py # lang_code -> script mapping
 PYTHONPATH=backend .venv/bin/python scripts/probe_tuned_stt.py   # turn-taking sweep
 PYTHONPATH=backend .venv/bin/python scripts/probe_batch.py       # batch STT
 PYTHONPATH=backend .venv/bin/python scripts/probe_llm_models.py  # LLM reachability

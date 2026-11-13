@@ -54,7 +54,10 @@ export interface LiveKitRoom {
   dismissError: () => void;
 }
 
-export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
+export function useLiveKitRoom(
+  lectureId: string | null,
+  language: string,
+): LiveKitRoom {
   const [status, setStatus] = useState<RoomStatus>("idle");
   const [error, setError] = useState<RoomError | null>(null);
   const { entries, push, clear } = useRoomTranscript();
@@ -138,7 +141,7 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
     clear();
 
     try {
-      const token = await api.livekitToken(lectureId, "Student");
+      const token = await api.livekitToken(lectureId, "Student", language);
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 
@@ -209,6 +212,11 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind !== Track.Kind.Audio) return;
         setAgentPresent(true);
+        // The raw client never plays a remote track on its own: without
+        // attach() the tutor's audio reaches the page (the meter below
+        // still moves) but no audio element ever sounds, so the student
+        // hears nothing. attach() creates that element and plays it.
+        track.attach();
         try {
           const meter = meterFor(new MediaStream([track.mediaStreamTrack]));
           if (meter) {
@@ -219,6 +227,11 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
         } catch {
           // Without a meter the screen still shows the playback state.
         }
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+        if (track.kind !== Track.Kind.Audio) return;
+        track.detach();
       });
 
       room.on(RoomEvent.Reconnecting, () => setStatus("reconnecting"));
@@ -236,6 +249,10 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       });
 
       await room.connect(token.url, token.token);
+      // Unlock the page's audio output while the click that started this
+      // session is still the freshest user gesture; browsers otherwise
+      // keep remote audio silent until a gesture happens.
+      await room.startAudio().catch(() => undefined);
       await room.localParticipant.setMicrophoneEnabled(true);
       setMicEnabled(true);
       setStatus("connected");
@@ -257,7 +274,7 @@ export function useLiveKitRoom(lectureId: string | null): LiveKitRoom {
       setError(classifyError(caught));
       setStatus("error");
     }
-  }, [lectureId, pushEntry, clear, meterFor, teardown]);
+  }, [lectureId, language, pushEntry, clear, meterFor, teardown]);
 
   const stop = useCallback(async () => {
     await teardown();

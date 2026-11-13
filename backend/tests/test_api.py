@@ -252,6 +252,13 @@ class TestChat:
         assert payload["results"][0]["semantic_score"] == pytest.approx(0.71)
 
 
+def _claims(token: str) -> dict:
+    """The decoded JWT claims of a minted token."""
+    body = token.split(".")[1]
+    body += "=" * (-len(body) % 4)
+    return json.loads(base64.urlsafe_b64decode(body))
+
+
 class TestLiveKitToken:
     def test_it_mints_a_token_for_the_lecture_room(self, client, seeded_lecture):
         payload = client.post(
@@ -270,9 +277,7 @@ class TestLiveKitToken:
         assert token.count(".") == 2
 
         # Assert on the decoded claims, never print the token itself.
-        body = token.split(".")[1]
-        body += "=" * (-len(body) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(body))
+        claims = _claims(token)
         video = claims["video"]
         assert video["roomJoin"] is True
         assert video["room"] == room
@@ -298,6 +303,32 @@ class TestLiveKitToken:
     def test_it_rejects_an_empty_lecture_id(self, client):
         response = client.post(
             "/api/livekit/token", json={"lecture_id": "", "participant_name": "S"}
+        )
+        assert response.status_code == 422
+
+    def test_it_puts_the_requested_language_in_the_room_metadata(
+        self, client, seeded_lecture
+    ):
+        payload = client.post(
+            "/api/livekit/token",
+            json={"lecture_id": seeded_lecture, "language": "hi-IN"},
+        ).json()
+        metadata = _claims(payload["token"])["roomConfig"]["metadata"]
+        assert json.loads(metadata) == {"language": "hi-IN"}
+
+    def test_without_a_language_it_falls_back_to_the_lectures(
+        self, client, seeded_lecture
+    ):
+        payload = client.post(
+            "/api/livekit/token", json={"lecture_id": seeded_lecture}
+        ).json()
+        metadata = _claims(payload["token"])["roomConfig"]["metadata"]
+        assert json.loads(metadata) == {"language": "te-IN"}
+
+    def test_it_rejects_a_language_the_stt_could_not_use(self, client, seeded_lecture):
+        response = client.post(
+            "/api/livekit/token",
+            json={"lecture_id": seeded_lecture, "language": "auto"},
         )
         assert response.status_code == 422
 

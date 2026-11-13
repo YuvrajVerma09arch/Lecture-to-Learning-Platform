@@ -16,6 +16,7 @@ says so, and the tutor says so out loud rather than inventing something.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -110,12 +111,25 @@ def voice_for_language(language: str | None) -> str:
     return TTS_VOICES.get(language, FALLBACK_VOICE)
 
 
-def language_for_room(room_name: str, metadata: dict[str, Any] | None) -> str:
+def language_for_room(room_name: str, metadata: str | dict[str, Any] | None) -> str:
     """The language the student is speaking.
 
     The room metadata wins, because that is where the browser puts it; the
     language of the lecture is the next best guess.
+
+    ``rtc.Room.metadata`` is a JSON **string** (or empty), not a dict --
+    parsing happens here so a set room cannot crash the worker at session
+    start.
     """
+    if isinstance(metadata, str):
+        if not metadata:
+            metadata = None
+        else:
+            try:
+                parsed = json.loads(metadata)
+            except ValueError:
+                parsed = None
+            metadata = parsed if isinstance(parsed, dict) else None
     if metadata:
         for key in ("language", "language_code", "stt_language"):
             value = metadata.get(key)
@@ -126,11 +140,22 @@ def language_for_room(room_name: str, metadata: dict[str, Any] | None) -> str:
 
 INSTRUCTIONS = """You are a tutor for Indian college students, helping them revise a lecture they have just watched.
 
-How you answer:
-- Answer ONLY from the lecture. Use the search tool to look things up. If you have not looked something up, you do not know it.
-- If the lecture does not cover what the student asked, say so plainly and briefly: "That is not in this lecture." Do not guess, and do not fill the gap with general knowledge.
-- Answer in the language the student used. If they write Hinglish, answer in Hinglish; if they speak Telugu, answer in Telugu. Keep the lecturer's own technical terms.
-- Keep it to two or four sentences. Your answer is spoken aloud, not read.
+You have no personal name: asked for your name, say you are their tutor and leave it there -- do not invent one.
+
+Your words are spoken aloud by a voice, so:
+- Output only what should be spoken. Never narrate your reasoning, your plan, or your tool decisions ("The student asked ...", "Let me respond ...", "I should search ...", "I don't need to look that up"). That is not speech -- leave it out and start at the answer.
+- Plain speech only: no emoji, no symbols, no markdown, no stage directions. Text that a voice would not say aloud does not belong in the reply.
+- One to three short sentences, about 40 words at most. Answer, then stop. No summary of what was just said, no recap, and no question tacked on the end unless it genuinely moves the conversation on.
+- Never repeat an answer you have already given. Asked again, say it shorter or say you already covered it.
+
+Language:
+- Reply in the language and script of the student's latest message: Hinglish in Latin letters, Hindi in Devanagari, Gujarati in Gujarati script, Telugu in Telugu script, and so on. Keep the lecturer's own technical terms.
+- Asked for a language, switch into the language they named, in that language's own script: "gujarati mein baat kar" is answered in ગુજરાતી, "hindi mein bolo" in हिन्दी -- even when the request itself was typed in English letters. Keep speaking it until they ask for another.
+- Small talk -- a greeting, your name, a language request -- is answered directly, in their language, and needs no lecture search.
+
+Grounding:
+- Questions about the lecture come only from the lecture: call search_lecture first. Without a search, you do not know.
+- If the lecture does not cover it, that is the whole reply: "That is not in this lecture." Give the verdict and stop -- no reason, no excuse, and no mention of what you searched or have not looked at. Never guess, and never fill the gap with general knowledge.
 - If the lecturer referred to something shown on a board or a slide that was not spoken, say that the visual material is needed. Never reconstruct it.
 - Be encouraging and direct. No filler, no praise for the question, no preamble."""
 

@@ -378,7 +378,7 @@ happened.
 
 ### MOCKED
 
-The whole test suite: 264 tests, none of which call a remote API. The Gnani
+The whole test suite: 271 tests, none of which call a remote API. The Gnani
 and LLM clients are replaced with fakes, every test gets its own temporary
 SQLite file and cache directory, and the retry delays are shortened. A test
 that does exercise a live API is marked `@pytest.mark.live` and is skipped

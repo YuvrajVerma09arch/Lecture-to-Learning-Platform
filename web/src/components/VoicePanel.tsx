@@ -8,9 +8,22 @@
 import { AudioMeter } from "./AudioMeter";
 import { ErrorState } from "./States";
 import type { LiveKitRoom } from "../hooks/useLiveKitRoom";
+import { SESSION_LANGUAGES } from "../lib/languages";
 
-export function VoicePanel({ room }: { room: LiveKitRoom }) {
+export function VoicePanel({
+  room,
+  language,
+  onLanguageChange,
+}: {
+  room: LiveKitRoom;
+  language: string;
+  onLanguageChange: (code: string) => void;
+}) {
   const state = describeState(room);
+  const languageLocked =
+    room.status === "connecting" ||
+    room.status === "connected" ||
+    room.status === "reconnecting";
 
   return (
     <section
@@ -57,6 +70,28 @@ export function VoicePanel({ room }: { room: LiveKitRoom }) {
           label="Tutor playback"
           active={room.agentSpeaking}
         />
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <label
+          htmlFor="voice-language"
+          className="text-xs font-medium text-muted"
+        >
+          You speak
+        </label>
+        <select
+          id="voice-language"
+          value={language}
+          onChange={(event) => onLanguageChange(event.target.value)}
+          disabled={languageLocked}
+          className="rounded-md border border-strong-line bg-white px-2 py-1.5 text-sm text-ink disabled:bg-canvas disabled:text-muted"
+        >
+          {SESSION_LANGUAGES.map(({ code, label }) => (
+            <option key={code} value={code}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">

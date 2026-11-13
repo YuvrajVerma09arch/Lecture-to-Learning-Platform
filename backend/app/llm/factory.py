@@ -250,6 +250,14 @@ def chat_llm() -> Any:
     Time-to-first-token dominates the perceived latency of a voice answer,
     so this is a fast, streaming model on a different provider from
     Workload A.
+
+    ``reasoning_effort="none"`` is deliberate and not a default: this model
+    is a hybrid-reasoning one that the plugin's own table does not
+    special-case, so without it the API may spend tokens on thinking that
+    has no business in a spoken reply -- it either shows up as narration in
+    the answer or simply delays the first audible word. Groq accepts the
+    value for this model (verified by direct call); a rejected value would
+    be a 400 on the first turn of every session, so the failure is loud.
     """
     settings = get_settings()
     if not settings.has_groq():
@@ -257,7 +265,11 @@ def chat_llm() -> Any:
 
     model = settings.llm_model_chat
     log.info("chat llm selected", extra={"model": model, "provider": "groq"})
-    return _groq_plugin.LLM(model=model, api_key=settings.groq_api_key)
+    return _groq_plugin.LLM(
+        model=model,
+        api_key=settings.groq_api_key,
+        reasoning_effort="none",
+    )
 
 
 def notes_llm_chain(*, segment: bool = False) -> list[Any]:

@@ -96,7 +96,7 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
 
     state = TutorState()
     state.lecture_id = lecture_id_from_room(ctx.room.name)
-    state.language = language_for_room(ctx.room.name, dict(ctx.room.metadata or {}))
+    state.language = language_for_room(ctx.room.name, ctx.room.metadata)
 
     log.info(
         "tutor session starting",

@@ -13,6 +13,7 @@ import { Conversation, type ConversationItem } from "../components/Conversation"
 import { QuestionForm } from "../components/QuestionForm";
 import { VoicePanel } from "../components/VoicePanel";
 import { EmptyState } from "../components/States";
+import { defaultLanguage } from "../lib/languages";
 import type { ChatAnswer, Lecture } from "../types";
 
 export function Chat({
@@ -24,7 +25,11 @@ export function Chat({
   lectures: Lecture[];
   onNavigate: (path: string, params?: Record<string, string>) => void;
 }) {
-  const room = useLiveKitRoom(lectureId);
+  const lecture = lectures.find((item) => item.id === lectureId) ?? null;
+  const [pickedLanguage, setPickedLanguage] = useState<string | null>(null);
+  const sessionLanguage =
+    pickedLanguage ?? defaultLanguage(lecture?.language_code);
+  const room = useLiveKitRoom(lectureId, sessionLanguage);
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState(false);
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
@@ -32,12 +37,12 @@ export function Chat({
   const [items, setItems] = useState<ConversationItem[]>([]);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const lastQuestion = useRef("");
-  const lecture = lectures.find((item) => item.id === lectureId) ?? null;
 
   useEffect(() => {
     setAnswer(null);
     setAskError(null);
     setItems([]);
+    setPickedLanguage(null);
   }, [lectureId]);
 
   useEffect(() => {
@@ -111,7 +116,11 @@ export function Chat({
         Speak to the tutor, or type your question.
       </p>
 
-      <VoicePanel room={room} />
+      <VoicePanel
+        room={room}
+        language={sessionLanguage}
+        onLanguageChange={setPickedLanguage}
+      />
 
       <div ref={transcriptRef}>
         <Conversation

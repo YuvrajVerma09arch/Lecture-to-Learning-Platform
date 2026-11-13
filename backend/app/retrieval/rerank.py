@@ -46,10 +46,13 @@ class GroundedAnswerPayload(BaseModel):
 
 ANSWER_SYSTEM = """You answer a student's question using ONLY the lecture excerpts provided.
 
+The student only ever hears `answer`, so treat it as a spoken line:
+- Plain speech, nothing else: no preamble, no reasoning, no narration of what you are doing ("The student asked ...", "Let me look ..."), no greeting, no sign-off, no emoji, no symbols, no markdown, no headings, no bullet lists, no bracketed citations.
+- One to three short sentences, about 40 words at most. Give the answer and stop.
+- Answer in the language the student asked in, written in that language's own script: Hindi in Devanagari, Gujarati in Gujarati script, Telugu in Telugu script, Hinglish in Latin letters, English in English. Asked for a language, switch into it and keep its script until they ask for another. Keep the lecturer's technical vocabulary.
+
 Rules you must follow:
-- Use only what the excerpts say. If the answer is not in the excerpts, set `covered` to false and write a short, friendly message that the lecture does not cover this topic. Do not guess, and do not fill the gap with general knowledge.
-- Answer in the language the student asked in (Hindi, Hinglish, Gujarati or English). Keep the teacher's technical vocabulary.
-- Keep it concise: this is a spoken answer, so two to four sentences.
+- Use only what the excerpts say. If the answer is not in the excerpts, set `covered` to false and write one short sentence saying that the lecture does not cover this. Do not guess, and do not fill the gap with general knowledge.
 - `cited_segments` must list the numbers of the excerpts you actually used, exactly as they are numbered in the prompt.
 - If an excerpt refers to something shown on screen or on a board that is not in the audio, say that the visual material is needed. Never reconstruct it.
 - `confidence` is your confidence from 0 to 1 that the excerpts support the answer."""
@@ -212,7 +215,9 @@ async def answer_grounded(
         source_segments = cited_source_segments(cited, segments)
         return GroundedAnswer(
             covered=covered,
-            answer=answer_text,
+            # The model's answer is spoken and shown as-is, so it is
+            # cleaned here rather than trusted to be clean.
+            answer=clean_speech_text(answer_text),
             # The source sequence numbers, not the excerpt numbers: these
             # point at the audio.
             cited_segments=[s.seq for s in source_segments],
@@ -257,3 +262,124 @@ def strip_citations(text: str) -> str:
     The answer is spoken aloud, so bracketed markers would be read out.
     """
     return re.sub(r"\s*\[\d+\]", "", text).strip()
+
+
+#: The longest a spoken answer may be, in words. The prompt asks for
+#: about forty; this is the safety net that catches a model which
+#: ignores that and starts lecturing instead of answering.
+MAX_ANSWER_WORDS = 60
+
+#: Emoji, pictographs and the joiners/formatting characters that only
+#: ever appear with them. Everything here is invisible to a voice and
+#: noise on screen, so it goes.
+_EMOJI = re.compile(
+    "[\u2190-\u21ff\u2600-\u27bf\u2b00-\u2bff\ufe0f\u200d\u20e3"
+    "\U0001f000-\U0001faff]"
+)
+
+#: Markdown that survives into spoken text. Handled as pairs first so
+#: that underscores inside identifiers (``max_tokens``) and asterisks
+#: used as multiplication are left alone.
+_MARKDOWN_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_MARKDOWN_ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+)\*(?!\w)")
+_MARKDOWN_CODE = re.compile(r"`([^`\n]*)`")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\([^)\n]*\)")
+_MARKDOWN_NOISE = re.compile(
+    r"^[ \t]{0,3}#{1,6}(?=[ \t]|$)[ \t]*|[ \t]*\*{3,}[ \t]*$", re.MULTILINE
+)
+#: Leading list markers. Numbered items are left alone: "2. The layer
+#: does X" is a point the lecturer made, not a bullet to drop.
+_BULLET = re.compile(r"^[ \t]{0,3}(?:[-\u2022\u2023\u25e6\u2013])[ \t]+", re.MULTILINE)
+
+#: A filler word the model opens with, followed by the punctuation that
+#: marks it as a filler rather than the sentence's first word.
+_LEADING_FILLER = re.compile(
+    r"^(?:sure|surely|okay|ok|well|right|actually|of course|great question|"
+    r"good question|nice question|\u0905\u091a\u094d\u091b\u093e|"
+    r"\u0939\u093e\u0901|\u091c\u0940|\u0ab8\u0abe\u0ab0\u0ac1\u0aae)"
+    r"[,!:\u0964\u0965]+[ \t]*",
+    re.IGNORECASE,
+)
+
+
+def _cap_words(text: str, max_words: int) -> str:
+    """Cut an over-long answer down, at a sentence boundary if there is one."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    head = " ".join(words[:max_words])
+    endings = list(re.finditer(r"[.!?!\u0964\u0965][\"')\]]?", head))
+    if endings and endings[-1].start() > len(head) // 3:
+        return head[: endings[-1].end()].strip()
+    return head.rstrip(" ,;:-") + "."
+
+
+#: A sentence that reports the model's own work instead of answering.
+#: These are what a student sees as "the tutor thinking out loud", so
+#: they are dropped from the front of an answer -- only while at least
+#: one real sentence is left behind.
+_NARRATION = re.compile(
+    r"^(?:the student (?:asked|wants|said|is asking)|"
+    r"let me|i (?:should|need to|will|'ll|must|don't need to|do not need to|have to)|"
+    r"i'm going to|i am going to|should i|first,? i|"
+    r"(?:okay|ok)[,!\s])",
+    re.IGNORECASE,
+)
+
+
+def _drop_leading_narration(text: str) -> str:
+    """Remove sentences that narrate instead of answering."""
+    sentences = re.split(r"(?<=[.!?!\u0964\u0965])[\"')\]]?\s+", text.strip())
+    if len(sentences) < 2:
+        return text
+    kept = [s for s in sentences if s]
+    index = 0
+    while index < len(kept) and index < 3 and _NARRATION.match(kept[index].strip()):
+        index += 1
+    if index == 0:
+        return text
+    rest = kept[index:]
+    if not rest:
+        # Every sentence was narration. The original is no worse than
+        # an empty answer, so it is what goes back.
+        return text
+    return " ".join(rest).strip()
+
+
+def clean_speech_text(text: str, *, max_words: int = MAX_ANSWER_WORDS) -> str:
+    """Make a model answer safe to show and to speak.
+
+    The answer travels two ways -- into the chat transcript and into a
+    voice -- and in neither does a citation marker, a heading, an emoji
+    or a forty-line preamble belong. This strips what a voice would trip
+    over and caps what a student would have to read, without ever
+    emptying the answer: an answer cleaned to nothing is worse than the
+    one it started as.
+    """
+    original = text
+    if not text or not text.strip():
+        return text
+
+    out = strip_citations(text)
+    out = _MARKDOWN_BOLD.sub(r"\1", out)
+    out = _MARKDOWN_ITALIC.sub(r"\1", out)
+    out = _MARKDOWN_CODE.sub(r"\1", out)
+    out = _MARKDOWN_LINK.sub(r"\1", out)
+    out = _MARKDOWN_NOISE.sub("", out)
+    out = _BULLET.sub("", out)
+    out = out.replace("**", "")
+    out = _EMOJI.sub(" ", out)
+    out = re.sub(r"[ \t]*\n[ \t]*", " ", out)
+    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    out = _LEADING_FILLER.sub("", out, count=1)
+    out = _drop_leading_narration(out)
+    out = out.strip()
+    # Dropping a filler can leave a sentence starting lower-case.
+    if out[:1].islower():
+        out = out[:1].upper() + out[1:]
+
+    if not out:
+        # Everything the model wrote was markup or emoji. The original
+        # is at least readable, so hand that back rather than nothing.
+        return original.strip()
+    return _cap_words(out, max_words)

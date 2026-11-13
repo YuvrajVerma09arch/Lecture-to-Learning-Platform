@@ -103,21 +103,44 @@ class TestLanguageSelection:
     def test_without_metadata_it_falls_back(self):
         assert tutor.language_for_room("lecture-1", None) == tutor.DEFAULT_LANGUAGE
 
+    def test_a_json_string_metadata_parses(self):
+        # rtc.Room.metadata is a JSON string, not a dict -- the shape the
+        # worker actually receives once a room carries language metadata.
+        assert (
+            tutor.language_for_room("lecture-1", '{"language": "hi-IN"}') == "hi-IN"
+        )
+
+    def test_an_empty_string_falls_back(self):
+        assert (
+            tutor.language_for_room("lecture-1", "") == tutor.DEFAULT_LANGUAGE
+        )
+
+    def test_broken_json_falls_back(self):
+        assert (
+            tutor.language_for_room("lecture-1", "not json") == tutor.DEFAULT_LANGUAGE
+        )
+
+    def test_non_object_json_falls_back(self):
+        assert tutor.language_for_room("lecture-1", '"te-IN"') == tutor.DEFAULT_LANGUAGE
+
 
 class TestInstructions:
     def test_the_instructions_require_the_lecture_to_be_searched(self):
         text = tutor.INSTRUCTIONS.lower()
         assert "only from the lecture" in text
-        assert "search tool" in text
+        assert "search_lecture" in text
 
     def test_the_instructions_require_declining_when_not_covered(self):
         assert "not in this lecture" in tutor.INSTRUCTIONS.lower()
 
     def test_the_instructions_require_the_student_language(self):
-        assert "language the student used" in tutor.INSTRUCTIONS.lower()
+        assert "language and script of the student's latest message" in tutor.INSTRUCTIONS.lower()
 
     def test_the_instructions_require_a_short_spoken_answer(self):
-        assert "two or four sentences" in tutor.INSTRUCTIONS.lower()
+        text = tutor.INSTRUCTIONS.lower()
+        assert "one to three short sentences" in text
+        # The spoken reply must not carry the model's reasoning with it.
+        assert "never narrate" in text
 
     def test_the_instructions_forbid_reconstructing_visual_material(self):
         assert "never reconstruct" in tutor.INSTRUCTIONS.lower()

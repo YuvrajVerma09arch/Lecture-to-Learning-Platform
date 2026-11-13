@@ -217,14 +217,24 @@ def splice_pause(pcm: bytes, *, at_seconds: float, seconds: float) -> bytes:
 # --------------------------------------------------------------------------
 
 
-async def mint_token(lecture_id: str, *, api_url: str) -> tuple[str, str]:
+async def mint_token(
+    lecture_id: str, *, language: str, api_url: str
+) -> tuple[str, str]:
     """Ask the backend for a room token.
+
+    The language is carried into the room metadata, so the streaming STT
+    transliterates into that language's script for the whole session --
+    one session per run, one language per session.
 
     Returns the token and the room name.
     """
     import aiohttp
 
-    payload = {"lecture_id": lecture_id, "participant_name": "Benchmark"}
+    payload = {
+        "lecture_id": lecture_id,
+        "participant_name": "Benchmark",
+        "language": language,
+    }
     timeout = aiohttp.ClientTimeout(connect=10, total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(
@@ -262,7 +272,9 @@ async def run_turn(
                 seconds=question.pause_seconds,
             )
 
-        token, room_name = await mint_token(lecture_id, api_url=api_url)
+        token, room_name = await mint_token(
+            lecture_id, language=question.language, api_url=api_url
+        )
 
         room = rtc.Room()
         source = rtc.AudioSource(SAMPLE_RATE, 1)

@@ -17,6 +17,7 @@ lecture to ground its answers in, without a shared secret in the URL.
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from typing import Any
@@ -24,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import db as db_mod
 from ..config import get_settings
 from ..logging_setup import get_logger
 
@@ -41,12 +43,41 @@ TOKEN_TTL_SECONDS = 60 * 60
 #: means the room opens without a tutor. A test pins the two together.
 AGENT_NAME = "lecture-tutor"
 
+#: The single-language codes the Gnani streaming STT accepts as ``lang_code``.
+#:
+#: Probed live (`scripts/probe_lang_detect.py`): every code is honoured as an
+#: instruction, not a detector -- `en-IN` transliterates everything to Latin,
+#: `hi-IN` everything to Devanagari. A comma list or `auto` is rejected by the
+#: server with WebSocket close 1008, so there is no auto-detect to lean on and
+#: the session language must be chosen. Keep in sync with
+#: `GnaniSTTLanguages` in `.venv/.../livekit/plugins/gnani/models.py`.
+SUPPORTED_LANGUAGES = frozenset(
+    {
+        "bn-IN",
+        "en-IN",
+        "gu-IN",
+        "hi-IN",
+        "kn-IN",
+        "ml-IN",
+        "mr-IN",
+        "pa-IN",
+        "ta-IN",
+        "te-IN",
+    }
+)
+
 
 class TokenRequest(BaseModel):
     #: The lecture the student is asking about. The room is named after
     #: it, so the agent knows which lecture to ground the answer in.
     lecture_id: str = Field(min_length=1, max_length=64)
     participant_name: str = Field(default="Student", max_length=64)
+    #: The language the student will speak this session, e.g. ``hi-IN``.
+    #: Optional: when omitted the lecture's own language is used. Must be
+    #: one of the single codes Gnani accepts -- anything else would be a
+    #: server-side 1008 on the streaming socket, so it is refused here
+    #: with a 422 instead.
+    language: str | None = Field(default=None, max_length=16)
 
 
 @router.post("/token")
@@ -62,6 +93,7 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
 
     from livekit import api
 
+    language = resolve_language(request)
     room = room_name_for(request.lecture_id)
     try:
         at = api.AccessToken(
@@ -83,7 +115,8 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
         # so the agent arrives with the student rather than early.
         at = at.with_room_config(
             api.RoomConfiguration(
-                agents=[api.RoomAgentDispatch(agent_name=AGENT_NAME)]
+                agents=[api.RoomAgentDispatch(agent_name=AGENT_NAME)],
+                metadata=json.dumps({"language": language}),
             )
         )
         at = at.with_ttl(timedelta(seconds=TOKEN_TTL_SECONDS))
@@ -100,6 +133,34 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
         "room": room,
         "expires_at": time.time() + TOKEN_TTL_SECONDS,
     }
+
+
+def resolve_language(request: TokenRequest) -> str:
+    """The session language: the request's choice, else the lecture's.
+
+    A language outside :data:`SUPPORTED_LANGUAGES` is a 422 rather than a
+    silent default -- Gnani closes the streaming socket with 1008 for an
+    unknown ``lang_code``, which would fail mid-session with a far worse
+    error than a rejected request.
+    """
+    if request.language is not None:
+        if request.language not in SUPPORTED_LANGUAGES:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Unsupported language {request.language!r}; "
+                    f"use one of {sorted(SUPPORTED_LANGUAGES)}"
+                ),
+            )
+        return request.language
+    with db_mod.get_conn() as conn:
+        row = conn.execute(
+            "SELECT language_code FROM lectures WHERE id=?",
+            (request.lecture_id,),
+        ).fetchone()
+    if row is not None and row["language_code"] in SUPPORTED_LANGUAGES:
+        return str(row["language_code"])
+    return "en-IN"
 
 
 def room_name_for(lecture_id: str) -> str:
