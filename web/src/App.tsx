@@ -11,6 +11,7 @@ import { ErrorState } from "./components/States";
 import { useAsync } from "./hooks/useAsync";
 import { lectureParam, useRoute } from "./lib/router";
 import { Flashcards } from "./pages/Flashcards";
+import { LoginScreen } from "./pages/LoginScreen";
 import { Notes } from "./pages/Notes";
 
 // The chat screen pulls in the LiveKit client, which is a large
@@ -27,6 +28,8 @@ const NAV = [
 
 export function App() {
   const [route, navigate] = useRoute();
+  // The boot probe: who we are, and whether Google sign-in is configured.
+  const auth = useAsync(() => api.me(), []);
   const lectures = useAsync(() => api.lectures().then((r) => r.lectures), []);
 
   const list = lectures.data ?? [];
@@ -56,6 +59,30 @@ export function App() {
     navigate(path, { lecture: id });
   };
 
+  const signOut = async () => {
+    await api.logout();
+    window.location.assign("/");
+  };
+
+  // Sign-in is only a gate when it is configured: in open mode `user` is
+  // null forever, and blocking on it would never let anyone in. While
+  // the probe is in flight nothing is shown, so the app never flashes
+  // for a moment before the sign-in screen takes over.
+  if (auth.status === "loading") {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-canvas">
+        <p role="status" className="text-sm text-muted">
+          Loading Lecture to Learning
+        </p>
+      </main>
+    );
+  }
+  // A failed probe falls through: the app still renders, and every other
+  // screen reports its own connection errors.
+  if (auth.data?.google_oauth && !auth.data.user) {
+    return <LoginScreen />;
+  }
+
   return (
     <div className="min-h-dvh bg-canvas">
       <a
@@ -70,6 +97,8 @@ export function App() {
         onNavigate={(target) =>
           navigate(target, selectedId ? { lecture: selectedId } : undefined)
         }
+        user={auth.data?.user ?? null}
+        onLogout={signOut}
       />
       <LectureBar
         lectures={list}
