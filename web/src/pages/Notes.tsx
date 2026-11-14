@@ -70,6 +70,18 @@ export function Notes({
     button?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [requestedSpan]);
 
+  // The shell's poll updates the lecture list, but this screen's own
+  // fetch has to follow it: once the notes pass finishes, the document
+  // appears without a reload. A refresh, not a reload, so the reader
+  // never flickers back to its loading state.
+  const processing =
+    lecture !== null && lecture.status !== "ready" && lecture.status !== "failed";
+  useEffect(() => {
+    if (!processing) return;
+    const timer = window.setInterval(() => notes.refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [processing, notes.refresh]);
+
   const activeSpan: SourceSpan | null =
     spans.find((span) => span.start === openStart) ?? null;
 
