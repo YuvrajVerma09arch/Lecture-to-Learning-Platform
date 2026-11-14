@@ -307,6 +307,27 @@ async def _continue_after_transcript(
     credits_estimated: float = 0.0,
 ) -> PipelineResult:
     """Segment, note, and merge. Safe to re-run on its own."""
+    # --- Is this even a lecture? ------------------------------------------
+    # Both the fresh and the cached path land here, and the transcript is
+    # already committed above, so a repeat upload fails fast without
+    # spending credits again. Silence, noise, or a cough transcribes to a
+    # handful of words -- that is not a lecture.
+    settings = get_settings()
+    full_text = " ".join(
+        str(seg.get("text") or "") for seg in transcript_segments
+    ).strip()
+    words = len(full_text.split())
+    characters = len(full_text)
+    if words < settings.min_lecture_words or characters < settings.min_lecture_characters:
+        reason = (
+            f"This recording does not look like a lecture: the transcript has "
+            f"{words} word(s) and {characters} character(s), but a lecture needs "
+            f"at least {settings.min_lecture_words} words and "
+            f"{settings.min_lecture_characters} characters."
+        )
+        await _mark_failed(lecture_id, STAGE_TRANSCRIBE, reason)
+        raise PipelineError(reason)
+
     # --- Segment ----------------------------------------------------------
     # Two levels are produced and kept:
     #

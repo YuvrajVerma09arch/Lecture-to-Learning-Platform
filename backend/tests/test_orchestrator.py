@@ -23,7 +23,7 @@ from app.pipeline import transcribe as transcribe_mod
 from .conftest import FakeLLM
 
 
-def _make_audio(path: Path, *, seconds: float = 4.0) -> Path:
+def _make_audio(path: Path, *, seconds: float = 6.0) -> Path:
     subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
          "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
@@ -56,7 +56,14 @@ class FakeBatchClient:
                     index=len(segments),
                     start_seconds=start,
                     end_seconds=start + 4.0,
-                    text=f"Segment number {i} discusses the topic of networks.",
+                    text=(
+                        f"Segment number {i} discusses the topic of networks in "
+                        "considerable detail, explaining how routers forward packets "
+                        "between subnets, how switches learn which port leads to which "
+                        "host, and why congestion control matters for throughput, "
+                        "together with worked examples from the lecture and their "
+                        "mapping onto real networks."
+                    ),
                     speaker_id=1,
                     chunk_index=i,
                 )
@@ -113,7 +120,7 @@ def fake_llms(monkeypatch):
 
 class TestFullPipeline:
     async def test_runs_end_to_end(self, tmp_path, fake_client, fake_llms):
-        audio = _make_audio(tmp_path / "lecture.mp3", seconds=4.0)
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
         result = await orchestrator.run_notes_pipeline(
             audio, title="Test Lecture", language_code="en-IN"
         )
@@ -156,7 +163,7 @@ class TestFullPipeline:
             assert usage[0]["kind"] == "batch_stt"
 
     async def test_a_cache_hit_skips_transcription(self, tmp_path, fake_client, fake_llms):
-        audio = _make_audio(tmp_path / "lecture.mp3", seconds=4.0)
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
 
         first = await orchestrator.run_notes_pipeline(
             audio, title="Test Lecture", language_code="en-IN"
@@ -185,7 +192,7 @@ class TestFullPipeline:
 
 class TestFailureIsolation:
     async def test_a_note_failure_preserves_the_transcript(self, tmp_path, fake_client, monkeypatch):
-        audio = _make_audio(tmp_path / "lecture.mp3", seconds=4.0)
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
 
         async def failing_notes(*args, **kwargs):
             raise RuntimeError("the model exploded")
@@ -218,7 +225,7 @@ class TestFailureIsolation:
     async def test_a_transcription_failure_never_stores_a_partial_transcript(
         self, tmp_path, fake_client, monkeypatch
     ):
-        audio = _make_audio(tmp_path / "lecture.mp3", seconds=4.0)
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
 
         async def failing_transcribe(*args, **kwargs):
             raise transcribe_mod.TranscribeError("Gnani rejected the request")
@@ -239,11 +246,52 @@ class TestFailureIsolation:
             assert lecture["failed_stage"] == "transcribe"
 
 
+class TestLectureGate:
+    async def test_a_transcript_too_short_to_be_a_lecture_is_refused(
+        self, tmp_path, monkeypatch
+    ):
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
+
+        class TinyTranscriptClient(FakeBatchClient):
+            """Returns a one-word transcript: a cough, not a lecture."""
+
+            async def transcribe(self, files, **kwargs):
+                self.calls.append({"files": [str(f) for f in files], "kwargs": kwargs})
+                return transcribe_mod.TranscriptResult(
+                    segments=[
+                        transcribe_mod.TranscriptSegment(
+                            index=0,
+                            start_seconds=0.0,
+                            end_seconds=4.0,
+                            text="ok.",
+                            speaker_id=1,
+                            chunk_index=0,
+                        )
+                    ],
+                    full_text="ok.",
+                    audio_seconds=4.0,
+                    language_code=kwargs.get("language_code", "en-IN"),
+                    job_id="fake-job",
+                )
+
+        monkeypatch.setattr(transcribe_mod, "GnaniBatchClient", TinyTranscriptClient)
+
+        with pytest.raises(orchestrator.PipelineError) as exc:
+            await orchestrator.run_notes_pipeline(audio, title="T", language_code="en-IN")
+        assert "does not look like a lecture" in str(exc.value)
+
+        with db_mod.get_conn() as conn:
+            lecture = conn.execute("SELECT * FROM lectures").fetchone()
+            assert lecture["status"] == "failed"
+            assert lecture["failed_stage"] == "transcribe"
+            assert "word" in (lecture["failure_reason"] or "")
+
+
 class TestCreditCeiling:
     async def test_refuses_a_job_that_would_exceed_the_ceiling(
         self, tmp_path, fake_client, fake_llms, monkeypatch
     ):
-        audio = _make_audio(tmp_path / "lecture.mp3", seconds=4.0)
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
 
         # A ceiling of zero means any transcription is refused.
         monkeypatch.setenv("DAILY_CREDIT_CEILING", "0")
