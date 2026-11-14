@@ -52,6 +52,15 @@ class RedactingFilter(logging.Filter):
             if _SENSITIVE_KEYS.search(key):
                 record.__dict__[key] = "***redacted***"
 
+        # Format before redacting: a message like "rejected id_token: %s"
+        # matches the inline pattern on its own placeholder, so redacting
+        # first would leave a format string whose argument no longer
+        # matches and the later ``msg % args`` would raise inside the
+        # handler — turning a 401 into a 500. Formatting first also means
+        # the interpolated value itself gets scanned for secrets.
+        if record.args:
+            record.msg = record.getMessage()
+            record.args = ()
         if isinstance(record.msg, str):
             record.msg = _INLINE_SECRET.sub(r"\1***redacted***", record.msg)
         return True

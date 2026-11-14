@@ -7,14 +7,29 @@ missing key fails fast at startup rather than at first request.
 
 from __future__ import annotations
 
+import os
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .logging_setup import get_logger
+
+log = get_logger(__name__)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
+
+#: Origins Vite serves in development.
+_DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
+
+
+def _is_local_origin(url: str) -> bool:
+    """True for http(s) origins on localhost or a loopback address."""
+    host = url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+    return host in {"localhost", "127.0.0.1", "::1", "[::1]"}
 
 
 class Settings(BaseSettings):
@@ -86,6 +101,43 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 500 * 1024 * 1024
     max_audio_duration_seconds: int = 6 * 60 * 60
 
+    # --- "Is this really a lecture?" gates ---
+    # The size and duration caps above stop abuse; these stop *waste*. A
+    # 3-second clip or a 40-character transcript cannot produce notes or
+    # flashcards, and each attempt still costs a transcribe job.
+    min_audio_duration_seconds: float = 5.0
+    min_lecture_words: int = 40
+    min_lecture_characters: int = 200
+
+    # --- Sessions and sign-in ---
+    # The signed cookie carries only an opaque session id; the row it names
+    # lives in `user_sessions`. That indirection is deliberate: signing out
+    # (or revoking a stolen cookie) is a row delete that takes effect on the
+    # next request, instead of whenever the cookie would have expired.
+    session_secret: str = Field(default="", repr=False)
+    session_cookie_name: str = "l2lp_session"
+    session_max_age_seconds: int = 14 * 24 * 60 * 60
+    # Secure cookies require HTTPS. Off for the local demo, which is served
+    # over http://localhost; a deployment should set SESSION_COOKIE_SECURE=true.
+    session_cookie_secure: bool = False
+
+    google_client_id: str = ""
+    google_client_secret: str = Field(default="", repr=False)
+    # Base URL of the single-page app. Empty means "the origin this request
+    # arrived on", which is correct in production, where this process also
+    # serves the built frontend. In development Vite owns :5173, so it must
+    # be set: the browser has to be sent back to the dev server (and the
+    # OAuth redirect registered with Google has to match it) rather than to
+    # the API port.
+    frontend_url: str = ""
+    # Extra origins allowed to call the API from a browser, comma separated.
+    allowed_origins: str = ""
+
+    # --- Rate limits (per client address, per minute) ---
+    rate_limit_write_per_minute: int = 120
+    rate_limit_upload_per_minute: int = 10
+    rate_limit_auth_per_minute: int = 30
+
     # --- Batch STT polling ---
     # Documented minimum poll interval is 10s; 30s is the documented
     # preference for larger jobs. We honour the floor and back off on 429.
@@ -126,6 +178,78 @@ class Settings(BaseSettings):
 
     def has_livekit(self) -> bool:
         return bool(self.livekit_url and self.livekit_api_key and self.livekit_api_secret)
+
+    def has_google_oauth(self) -> bool:
+        """True when Google sign-in is configured.
+
+        The client id alone is enough for the browser to be sent to Google;
+        the secret is needed one step later, at the token exchange. Both are
+        checked here so a half-configured deployment fails visibly at login
+        time rather than at the callback.
+        """
+        return bool(self.google_client_id and self.google_client_secret)
+
+    def frontend_base(self, request_base_url: str) -> str:
+        """Where to send the browser after an action, with no trailing slash.
+
+        ``FRONTEND_URL`` wins when set: in development Vite owns another
+        port, and the origin the API saw is the Vite proxy, not the page.
+        Otherwise the caller's own scheme/host/port is right, because in
+        production this process serves the built frontend too.
+        """
+        base = (self.frontend_url or request_base_url or "").rstrip("/")
+        return base
+
+    def cors_origins(self) -> list[str]:
+        """Origins allowed to call the API from a browser.
+
+        The frontend origin always counts. The localhost dev origins are
+        added only while the app itself is being served from localhost, so
+        pointing FRONTEND_URL at a real domain never silently opens the API
+        to anyone running a copy of the dev server.
+        """
+        origins: set[str] = set()
+        if self.frontend_url:
+            origins.add(self.frontend_url.rstrip("/"))
+        for extra in self.allowed_origins.split(","):
+            origin = extra.strip().rstrip("/")
+            if origin:
+                origins.add(origin)
+        local_dev = not self.frontend_url or _is_local_origin(self.frontend_url)
+        if local_dev:
+            origins |= _DEV_ORIGINS
+        return sorted(origins)
+
+    def session_secret_value(self) -> str:
+        """The signing key for the session cookie.
+
+        An explicit SESSION_SECRET is always used when present. Otherwise a
+        random key is generated once and kept in the data directory, so
+        sessions survive a restart instead of signing everyone out on every
+        deploy or reload.
+        """
+        if self.session_secret:
+            return self.session_secret
+        path = self.data_dir / ".session_secret"
+        try:
+            existing = path.read_text(encoding="utf-8").strip()
+            if existing:
+                return existing
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning("session secret unreadable; generating an ephemeral one")
+            return secrets.token_urlsafe(48)
+        value = secrets.token_urlsafe(48)
+        try:
+            # O_EXCL: if two processes race, the loser reads the winner's key
+            # rather than overwriting it and invalidating live sessions.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return path.read_text(encoding="utf-8").strip()
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(value)
+        return value
 
     def estimated_credits(self, audio_seconds: float) -> float:
         """Conservative credit estimate for a transcription job."""

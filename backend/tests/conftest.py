@@ -51,6 +51,20 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # unchanged.
     monkeypatch.setenv("BATCH_POLL_INTERVAL_SECONDS", "0.01")
     monkeypatch.setenv("BATCH_POLL_MAX_INTERVAL_SECONDS", "0.01")
+    # Sign-in is off unless a test asks for it: the suite should exercise
+    # the same open mode a fresh clone runs in, and `test_auth.py` turns
+    # the credentials on explicitly. An empty value overrides the real
+    # .env, which does carry them.
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "")
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
+    monkeypatch.setenv("FRONTEND_URL", "")
+    # No test should ever be throttled by the rate limiter; the limiter
+    # has its own tests with their own limits.
+    monkeypatch.setenv("RATE_LIMIT_WRITE_PER_MINUTE", "1000000")
+    monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MINUTE", "1000000")
+    monkeypatch.setenv("RATE_LIMIT_AUTH_PER_MINUTE", "1000000")
 
     config_mod.reset_settings_cache()
     yield config_mod.get_settings()

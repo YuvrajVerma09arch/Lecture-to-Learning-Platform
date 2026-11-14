@@ -14,15 +14,19 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from . import db as db_mod
+from .api import auth as auth_api
 from .api import chat, flashcards, health, lectures, livekit
+from .api.auth import require_user
 from .config import PROJECT_ROOT, get_settings
 from .logging_setup import configure_logging, get_logger
+from .middleware import SecurityMiddleware
 
 log = get_logger(__name__)
 
@@ -41,33 +45,67 @@ def create_app() -> FastAPI:
         ),
     )
 
+    # Middleware wraps in the order it is added: the last one added is the
+    # outermost. Sessions therefore go on first, so that a CORS preflight
+    # or a security header never has to read a cookie, and CORS goes on
+    # last, so the browser sees the same response whether or not the
+    # origin was allowed.
+    settings = get_settings()
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.session_secret_value(),
+        session_cookie=settings.session_cookie_name,
+        max_age=settings.session_max_age_seconds,
+        same_site="lax",
+        # Secure cookies need HTTPS. Off for the local http:// demo.
+        https_only=settings.session_cookie_secure,
+    )
+
+    # Added second, so it wraps the session layer: it stamps security
+    # headers, rejects cross-origin writes, and rate-limits — without
+    # ever having to read a cookie itself.
+    app.add_middleware(SecurityMiddleware)
+
     # The frontend is served from the same origin in production, so CORS
-    # is only needed for the Vite dev server.
+    # is only needed for the Vite dev server. It goes on last — outermost
+    # — so the browser sees the same response whether or not the origin
+    # was allowed, including the 403 the security layer answers with.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-        ],
+        allow_origins=settings.cors_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.include_router(health.router)
-    app.include_router(lectures.router)
-    app.include_router(chat.router)
-    app.include_router(flashcards.router)
-    app.include_router(livekit.router)
+    app.include_router(auth_api.router)
+
+    # Everything that reads or writes lecture data needs a signed-in
+    # request. Health and sign-in stay open: a probe that has to log in
+    # is not a probe, and you cannot sign in if the sign-in route is
+    # guarded.
+    signed_in = [Depends(require_user)]
+    app.include_router(lectures.router, dependencies=signed_in)
+    app.include_router(chat.router, dependencies=signed_in)
+    app.include_router(flashcards.router, dependencies=signed_in)
+    app.include_router(livekit.router, dependencies=signed_in)
 
     @app.on_event("startup")
     async def _startup() -> None:
         db_mod.init_db()
+        settings = get_settings()
+        if not settings.has_google_oauth():
+            log.warning(
+                "google sign-in is not configured; the API is unauthenticated",
+                extra={"hint": "set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"},
+            )
         log.info(
             "api ready",
             extra={
-                "database": str(get_settings().db_path),
+                "database": str(settings.db_path),
                 "frontend": FRONTEND_DIST.exists(),
+                "auth": settings.has_google_oauth(),
             },
         )
 

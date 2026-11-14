@@ -208,6 +208,30 @@ CREATE TRIGGER IF NOT EXISTS segments_au AFTER UPDATE ON segments BEGIN
     INSERT INTO segments_fts(segments_fts, rowid, text) VALUES ('delete', old.id, old.text);
     INSERT INTO segments_fts(rowid, text) VALUES (new.id, new.text);
 END;
+
+-- Accounts. Keyed by the identity provider's immutable subject id, not by
+-- the email: Google can reassign an address, a subject cannot change hands.
+CREATE TABLE IF NOT EXISTS users (
+    id             TEXT PRIMARY KEY,
+    google_sub     TEXT NOT NULL UNIQUE,
+    email          TEXT NOT NULL,
+    name           TEXT NOT NULL DEFAULT '',
+    picture        TEXT NOT NULL DEFAULT '',
+    created_at     REAL NOT NULL,
+    last_login_at  REAL NOT NULL
+);
+
+-- Server-side session records. The cookie holds only `sid`; deleting the
+-- row revokes the session immediately, including for a stolen cookie.
+CREATE TABLE IF NOT EXISTS user_sessions (
+    sid        TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
 """
 
 
