@@ -13,6 +13,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +26,19 @@ from app.api import chat as chat_api
 from app.api import lectures as lectures_api
 from app.api import livekit as livekit_api
 from app.retrieval import fts, rerank
+
+
+def _make_audio_bytes(*, seconds: float) -> bytes:
+    """Real ffmpeg-encoded mp3 bytes of a sine tone."""
+    path = Path(tempfile.gettempdir()) / f"api-test-tone-{seconds}.mp3"
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+         "-ar", "16000", "-ac", "1", str(path)],
+        check=True,
+        capture_output=True,
+    )
+    return path.read_bytes()
 
 
 @pytest.fixture
@@ -120,12 +136,32 @@ class TestLectures:
         )
         response = client.post(
             "/api/lectures/upload",
-            files={"file": ("lecture.mp3", b"\x00" * 2048, "audio/mpeg")},
+            files={"file": ("lecture.mp3", _make_audio_bytes(seconds=6.0), "audio/mpeg")},
             data={"title": "Test Lecture", "language_code": "te-IN"},
         )
         assert response.status_code == 200
         assert response.json()["status"] == "accepted"
         assert started, "the pipeline should have been scheduled"
+
+    def test_upload_rejects_a_file_that_is_not_really_audio(self, client):
+        # Right extension, wrong bytes: ffprobe cannot decode it, so the
+        # request fails now with 415 instead of failing later in the pipeline.
+        response = client.post(
+            "/api/lectures/upload",
+            files={"file": ("lecture.mp3", b"\x00" * 2048, "audio/mpeg")},
+            data={"title": "Test"},
+        )
+        assert response.status_code == 415
+        assert "not readable as audio" in response.json()["detail"]
+
+    def test_upload_rejects_a_recording_too_short_to_be_a_lecture(self, client):
+        response = client.post(
+            "/api/lectures/upload",
+            files={"file": ("blip.mp3", _make_audio_bytes(seconds=1.0), "audio/mpeg")},
+            data={"title": "Test"},
+        )
+        assert response.status_code == 400
+        assert "too short" in response.json()["detail"]
 
     def test_list_returns_the_lectures(self, client, seeded_lecture):
         payload = client.get("/api/lectures").json()

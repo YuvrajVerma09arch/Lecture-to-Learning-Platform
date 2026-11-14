@@ -19,6 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Uploa
 from .. import db as db_mod
 from ..config import get_settings
 from ..logging_setup import get_logger
+from ..pipeline import ingest as ingest_mod
 from ..pipeline import orchestrator
 
 log = get_logger(__name__)
@@ -99,6 +100,15 @@ async def upload_lecture(
     if size == 0:
         target.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    # Prove the upload is decodable audio and long enough to be a lecture
+    # before queueing it: a garbage file should fail here, in the request,
+    # with a real HTTP status -- not minutes later as a pipeline error.
+    try:
+        ingest_mod.validate_upload(target)
+    except ingest_mod.IngestError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     log.info(
         "lecture upload accepted",
