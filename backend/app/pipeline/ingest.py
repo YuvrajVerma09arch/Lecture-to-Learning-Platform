@@ -61,7 +61,17 @@ _MAGIC = [
 
 
 class IngestError(Exception):
-    """Raised when a file cannot be accepted. The message is user-facing."""
+    """Raised when a file cannot be accepted. The message is user-facing.
+
+    ``status_code`` is the HTTP status the upload endpoint should answer
+    with: 400 for anything the user should fix (empty, too short, wrong
+    type), 415 for content that is not decodable audio at all, and 503
+    when the server itself cannot validate (ffprobe missing).
+    """
+
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass
@@ -131,7 +141,7 @@ def detect_suffix(path: Path) -> str | None:
 def probe_media(path: Path) -> MediaInfo:
     """Run ffprobe and return media facts. Raises IngestError on bad media."""
     if not shutil.which("ffprobe"):
-        raise IngestError("ffprobe is not available on this system")
+        raise IngestError("ffprobe is not available on this system", status_code=503)
 
     cmd = [
         "ffprobe", "-v", "error", "-print_format", "json",
@@ -143,21 +153,21 @@ def probe_media(path: Path) -> MediaInfo:
         raise IngestError("Reading the audio file timed out") from exc
 
     if proc.returncode != 0:
-        raise IngestError("The file is not readable as audio")
+        raise IngestError("The file is not readable as audio", status_code=415)
 
     try:
         info = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise IngestError("Could not interpret the audio file") from exc
+        raise IngestError("Could not interpret the audio file", status_code=415) from exc
 
     audio_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "audio"]
     if not audio_streams:
-        raise IngestError("The file contains no audio track")
+        raise IngestError("The file contains no audio track", status_code=415)
 
     stream = audio_streams[0]
     duration = float(info.get("format", {}).get("duration") or stream.get("duration") or 0.0)
     if duration <= 0:
-        raise IngestError("The audio duration could not be determined")
+        raise IngestError("The audio duration could not be determined", status_code=415)
 
     settings = get_settings()
     size = path.stat().st_size
@@ -200,7 +210,17 @@ def validate_upload(path: Path) -> MediaInfo:
     if media.detected_suffix not in GNANI_SUPPORTED_SUFFIXES:
         raise IngestError(
             f"'{media.detected_suffix}' is not a format Gnani's batch API accepts. "
-            f"Supported: {', '.join(sorted(GNANI_SUPPORTED_SUFFIXES))}."
+            f"Supported: {', '.join(sorted(GNANI_SUPPORTED_SUFFIXES))}.",
+            status_code=415,
+        )
+
+    # A lecture floor, not a media floor: chunk probes call probe_media on
+    # sub-minute slices, so this check lives here rather than there.
+    settings = get_settings()
+    if media.duration_seconds < settings.min_audio_duration_seconds:
+        raise IngestError(
+            f"The recording is too short ({media.duration_seconds:.1f}s). "
+            f"A lecture must be at least {settings.min_audio_duration_seconds:g} seconds long."
         )
 
     log.info(

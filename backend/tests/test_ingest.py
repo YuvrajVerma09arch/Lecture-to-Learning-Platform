@@ -37,16 +37,36 @@ class TestUploadValidation:
         with pytest.raises(ingest.IngestError, match="Unsupported file type"):
             ingest.validate_upload(path)
 
-    def test_rejects_file_with_no_audio_track(self, tmp_path: Path):
+    def test_rejects_garbage_bytes_that_are_not_audio(self, tmp_path: Path):
         path = tmp_path / "silent.mp3"
         path.write_bytes(b"not really audio" * 100)
-        with pytest.raises(ingest.IngestError):
+        with pytest.raises(ingest.IngestError, match="not readable as audio") as exc:
             ingest.validate_upload(path)
+        assert exc.value.status_code == 415
+
+    def test_rejects_a_video_file_with_no_audio_track(self, tmp_path: Path):
+        path = tmp_path / "silent.mp4"
+        subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
+             "-c:v", "libx264", "-an", str(path)],
+            check=True,
+            capture_output=True,
+        )
+        with pytest.raises(ingest.IngestError, match="no audio track") as exc:
+            ingest.validate_upload(path)
+        assert exc.value.status_code == 415
+
+    def test_rejects_a_recording_too_short_to_be_a_lecture(self, tmp_path: Path):
+        path = _make_audio(tmp_path / "blip.mp3", seconds=1.0)
+        with pytest.raises(ingest.IngestError, match="too short") as exc:
+            ingest.validate_upload(path)
+        assert exc.value.status_code == 400
 
     def test_accepts_a_real_audio_file(self, tmp_path: Path):
-        path = _make_audio(tmp_path / "tone.mp3", seconds=2.0)
+        path = _make_audio(tmp_path / "tone.mp3", seconds=6.0)
         media = ingest.validate_upload(path)
-        assert media.duration_seconds == pytest.approx(2.0, abs=0.3)
+        assert media.duration_seconds == pytest.approx(6.0, abs=0.3)
         assert media.channels == 1
         assert media.size_bytes > 0
 
