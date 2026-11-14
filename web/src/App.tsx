@@ -13,6 +13,7 @@ import { lectureParam, useRoute } from "./lib/router";
 import { Flashcards } from "./pages/Flashcards";
 import { LoginScreen } from "./pages/LoginScreen";
 import { Notes } from "./pages/Notes";
+import { Upload } from "./pages/Upload";
 
 // The chat screen pulls in the LiveKit client, which is a large
 // download on a phone. It is loaded only when the student asks a doubt.
@@ -24,7 +25,13 @@ const NAV = [
   { path: "/notes", label: "Notes" },
   { path: "/flashcards", label: "Flashcards" },
   { path: "/chat", label: "Doubt chat" },
+  { path: "/upload", label: "Upload" },
 ];
+
+const SCREENS = ["/notes", "/flashcards", "/chat", "/upload"];
+
+/** A lecture is only finished once it has stopped moving. */
+const isSettled = (status: string) => status === "ready" || status === "failed";
 
 export function App() {
   const [route, navigate] = useRoute();
@@ -40,20 +47,25 @@ export function App() {
     list[0]?.id ??
     null;
 
-  const path =
-    route.path === "/chat" || route.path === "/flashcards" ? route.path : "/notes";
+  const path: string = SCREENS.includes(route.path) ? route.path : "/notes";
 
   // A bare URL has no screen of its own; send it to the notes.
   useEffect(() => {
-    if (
-      route.path !== "/" &&
-      route.path !== "/notes" &&
-      route.path !== "/flashcards" &&
-      route.path !== "/chat"
-    ) {
-      navigate("/notes", route.params.get("lecture") ? { lecture: route.params.get("lecture") as string } : undefined);
+    if (route.path !== "/" && !SCREENS.includes(route.path)) {
+      const lecture = route.params.get("lecture");
+      navigate("/notes", lecture ? { lecture } : undefined);
     }
   }, [route, navigate]);
+
+  // While any lecture is still moving, poll the list so its status in
+  // the bar climbs from "processing" to "ready" without a reload. A
+  // refresh, not a reload: the screen must not flicker every few seconds.
+  const processing = list.some((lecture) => !isSettled(lecture.status));
+  useEffect(() => {
+    if (!processing) return;
+    const timer = window.setInterval(() => lectures.refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [processing, lectures.refresh]);
 
   const selectLecture = (id: string) => {
     navigate(path, { lecture: id });
@@ -62,6 +74,13 @@ export function App() {
   const signOut = async () => {
     await api.logout();
     window.location.assign("/");
+  };
+
+  // The upload returns before any work starts, so the student goes
+  // straight to the notes, where the new lecture's stages are shown.
+  const uploaded = () => {
+    lectures.reload();
+    navigate("/notes");
   };
 
   // Sign-in is only a gate when it is configured: in open mode `user` is
@@ -136,6 +155,8 @@ export function App() {
           lectures={list}
           onNavigate={navigate}
         />
+      ) : path === "/upload" ? (
+        <Upload lectures={list} onUploaded={uploaded} />
       ) : (
         <Notes
           lectureId={selectedId}
