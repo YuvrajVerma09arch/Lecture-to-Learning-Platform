@@ -13,6 +13,8 @@ export interface AsyncResult<T> {
   data: T | null;
   error: Error | null;
   reload: () => void;
+  /** Re-fetch without flipping back to `loading`: for background polling. */
+  refresh: () => void;
 }
 
 export function useAsync<T>(
@@ -27,6 +29,9 @@ export function useAsync<T>(
   const [error, setError] = useState<Error | null>(null);
   const [nonce, setNonce] = useState(0);
   const requestId = useRef(0);
+  // Set when the next fetch is a background refresh: it must not flip
+  // the screen back to its loading state.
+  const silent = useRef(false);
 
   useEffect(() => {
     if (!enabled) {
@@ -36,7 +41,10 @@ export function useAsync<T>(
     const id = requestId.current + 1;
     requestId.current = id;
     let cancelled = false;
-    setStatus("loading");
+    if (!silent.current) {
+      setStatus("loading");
+    }
+    silent.current = false;
     setError(null);
     load()
       .then((result) => {
@@ -56,7 +64,11 @@ export function useAsync<T>(
   }, [...deps, nonce, enabled]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
-  return { status, data, error, reload };
+  const refresh = useCallback(() => {
+    silent.current = true;
+    setNonce((n) => n + 1);
+  }, []);
+  return { status, data, error, reload, refresh };
 }
 
 /** True when the failure was the network, not the server. */
