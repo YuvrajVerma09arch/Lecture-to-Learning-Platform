@@ -153,6 +153,99 @@
   box-shadow: 0 6px 18px color-mix(in srgb, var(--color-ink) 7%, transparent);
 }
 
+/*
+ * Dark mode.
+ *
+ * `public/theme-init.js` puts `.dark` on <html> before first paint.
+ * Like the clay rules above, these are unlayered, so they win over the
+ * light gradients and the flat utilities (bg-white, text-ink) without
+ * touching a single component.
+ *
+ * Two tokens are deliberately left alone: `--color-accent` stays teal
+ * because white text on it keeps its contrast, and `--color-white` is
+ * shared with `text-white`, so surfaces that used it are restyled with
+ * a targeted rule instead.
+ */
+.dark {
+  color-scheme: dark;
+  --color-ink: #e2e8f0;
+  --color-body: #cbd5e1;
+  --color-muted: #94a3b8;
+  --color-line: #26324a;
+  --color-strong-line: #3a4763;
+  --color-canvas: #0b1220;
+}
+
+/* Surfaces that carried `bg-white` rather than a token. */
+.dark .bg-white {
+  background-color: #131c2e;
+}
+
+.dark .hover\:bg-white:hover {
+  background-color: #1b2539;
+}
+
+/* Links and the active heading: teal-200 reads on the dark canvas. */
+.dark .text-accent-ink {
+  color: #5eead4;
+}
+
+/* The clay lights are inverted: shadow below, dark rim above. */
+.dark .clay {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: linear-gradient(145deg, #161f31 0%, #121a2a 100%);
+  box-shadow:
+    10px 10px 24px rgba(0, 0, 0, 0.45),
+    -6px -6px 16px rgba(255, 255, 255, 0.03),
+    inset 1px 1px 2px rgba(255, 255, 255, 0.05);
+}
+
+/* The dashed "nothing here yet" outline keeps its grey dashes. */
+.dark .clay-dashed {
+  border-color: var(--color-strong-line);
+}
+
+/* The tutor's rim stays accent-tinted, mixed toward the dark-mode teal. */
+.dark .clay-rim-accent {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, #5eead4);
+}
+
+/* Wells sit lower: darker still, light only on the bottom-right. */
+.dark .clay-inset {
+  border-color: rgba(255, 255, 255, 0.05);
+  background: linear-gradient(145deg, #0f1726 0%, #131c2e 100%);
+  box-shadow:
+    inset 4px 4px 10px rgba(0, 0, 0, 0.5),
+    inset -3px -3px 8px rgba(255, 255, 255, 0.03);
+}
+
+.dark .clay-btn {
+  border-color: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    5px 5px 12px rgba(0, 0, 0, 0.45),
+    -4px -4px 10px rgba(255, 255, 255, 0.04),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.06);
+}
+
+.dark .clay-btn:hover:not(:disabled) {
+  box-shadow:
+    7px 7px 16px rgba(0, 0, 0, 0.5),
+    -5px -5px 12px rgba(255, 255, 255, 0.05),
+    inset 1px 1px 1px rgba(255, 255, 255, 0.07);
+}
+
+.dark .clay-btn:active:not(:disabled) {
+  box-shadow:
+    inset 4px 4px 9px rgba(0, 0, 0, 0.55),
+    inset -3px -3px 7px rgba(255, 255, 255, 0.04);
+}
+
+/* The header, last, so it wins over `.dark .clay` where both apply. */
+.dark .clay-bar {
+  background: linear-gradient(145deg, #151e30 0%, #121a2a 100%);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .clay-btn {
     transition: none;
