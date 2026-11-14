@@ -45,7 +45,7 @@ function SunIcon() {
       <path
         strokeLinecap="round"
         strokeLinejoin="round"
-        d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"
+        d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591 1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z"
       />
     </svg>
   );
@@ -78,13 +78,16 @@ export function AppHeader({
     setTheme(next);
   };
   return (
-    <header className="clay-bar sticky top-0 z-30 border-b border-line bg-white">
-      <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-        <span className="text-base font-semibold tracking-tight text-ink">
-          Lecture to Learning
+    <header className="sticky top-0 z-30 border-b border-line bg-surface">
+      <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2.5 sm:gap-4">
+        <span className="flex shrink-0 items-center gap-2 text-ink">
+          <span aria-hidden="true" className="h-3.5 w-3.5 bg-accent" />
+          <span className="font-serif text-base font-semibold tracking-tight">
+            Lecture to Learning
+          </span>
         </span>
-        <nav aria-label="Main" className="ml-auto">
-          <ul className="flex items-center gap-1">
+        <nav aria-label="Main" className="ml-auto min-w-0">
+          <ul className="flex items-center gap-0.5 overflow-x-auto sm:gap-1">
             {items.map((item) => {
               const active = currentPath === item.path;
               return (
@@ -93,10 +96,10 @@ export function AppHeader({
                     type="button"
                     onClick={() => onNavigate(item.path)}
                     aria-current={active ? "page" : undefined}
-                    className={`clay-nav clay-btn rounded-md px-3 py-2 text-sm font-medium ${
+                    className={`whitespace-nowrap border-b-2 px-2 py-1.5 text-xs font-medium sm:px-2.5 sm:text-sm ${
                       active
-                        ? "clay-accent bg-accent text-white"
-                        : "text-body hover:bg-canvas"
+                        ? "border-accent text-ink"
+                        : "border-transparent text-muted hover:text-ink"
                     }`}
                   >
                     {item.label}
@@ -113,14 +116,14 @@ export function AppHeader({
             theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
           }
           title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          className="clay-nav clay-btn rounded-md px-3 py-2 text-body hover:bg-canvas"
+          className="btn btn-quiet shrink-0 px-2 py-1.5"
         >
           {theme === "dark" ? <SunIcon /> : <MoonIcon />}
         </button>
         {who && onLogout && (
-          <div className="flex items-center gap-2 border-l border-line pl-3">
+          <div className="flex shrink-0 items-center gap-1 border-l border-line pl-2 sm:gap-2 sm:pl-3">
             <span
-              className="hidden max-w-[10rem] truncate text-sm text-muted sm:block"
+              className="hidden max-w-[10rem] truncate text-sm text-muted md:block"
               title={who}
             >
               {who}
@@ -128,7 +131,7 @@ export function AppHeader({
             <button
               type="button"
               onClick={onLogout}
-              className="clay-nav clay-btn rounded-md px-3 py-2 text-sm font-medium text-body hover:bg-canvas"
+              className="btn btn-quiet px-2 py-1.5 text-xs sm:text-sm"
             >
               Sign out
             </button>

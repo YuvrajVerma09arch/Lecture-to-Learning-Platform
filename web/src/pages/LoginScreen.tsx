@@ -46,36 +46,46 @@ export function LoginScreen() {
   const next = `${window.location.pathname}${search ? `?${search}` : ""}`;
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-4 py-10">
-      <div className="clay rounded-xl border border-line bg-white px-6 py-8">
-        <h1 className="text-xl font-semibold tracking-tight text-ink">
-          Lecture to Learning
-        </h1>
-        <p className="mt-2 text-sm text-muted">
-          Sign in to turn a lecture recording into notes, flashcards and a
-          voice tutor that answers only from the lecture.
-        </p>
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-canvas px-4 py-10">
+      <div className="w-full max-w-md">
+        <div className="mb-5 flex items-center gap-2 text-ink">
+          <span aria-hidden="true" className="h-4 w-4 bg-accent" />
+          <span className="font-serif text-lg font-semibold tracking-tight">
+            Lecture to Learning
+          </span>
+        </div>
 
-        {message && (
-          <p
-            role="alert"
-            className="clay-inset mt-4 px-3 py-2 text-sm text-body"
-          >
-            {message}
+        <div className="card px-6 py-8">
+          <p className="eyebrow">Sign in</p>
+          <h1 className="mt-2 font-serif text-2xl font-semibold leading-tight tracking-tight text-ink">
+            Turn a lecture into something you can study.
+          </h1>
+          <p className="mt-3 text-sm text-muted">
+            Notes, flashcards and a voice tutor that answers only from what
+            was said in the recording.
           </p>
-        )}
 
-        <a
-          href={api.login(next)}
-          className="clay-btn clay-accent mt-6 block w-full rounded-md px-4 py-2.5 text-center text-sm font-medium"
-        >
-          Continue with Google
-        </a>
+          {message && (
+            <p
+              role="alert"
+              className="well mt-5 border-l-4 border-l-warn px-3 py-2 text-sm text-warn"
+            >
+              {message}
+            </p>
+          )}
 
-        <p className="mt-4 text-xs text-muted">
-          Your account only stores your name and email from Google. Nothing
-          else is shared.
-        </p>
+          <a
+            href={api.login(next)}
+            className="btn btn-primary mt-6 w-full py-2.5"
+          >
+            Continue with Google
+          </a>
+
+          <p className="mt-4 text-xs text-muted">
+            Your account only stores your name and email from Google. Nothing
+            else is shared.
+          </p>
+        </div>
       </div>
     </main>
   );

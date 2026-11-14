@@ -14,8 +14,6 @@ import { SESSION_LANGUAGES } from "../lib/languages";
 import type { Lecture } from "../types";
 
 const ACCEPT = ".wav,.mp3,.mp4,.m4a,.aac,.flac,.ogg,.opus,.webm,.amr,audio/*,video/mp4";
-const PRIMARY =
-  "clay-btn clay-accent rounded-md bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-ink disabled:opacity-60";
 
 /** `recursion-lecture.mp3` -> `Recursion lecture`. */
 function titleFromFilename(name: string): string {
@@ -65,7 +63,7 @@ export function Upload({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="text-xl font-semibold tracking-tight text-ink">
+      <h1 className="font-serif text-2xl font-semibold tracking-tight text-ink">
         Upload a lecture
       </h1>
       <p className="mt-1 max-w-prose text-sm text-muted">
@@ -76,25 +74,25 @@ export function Upload({
 
       <form
         onSubmit={submit}
-        className="clay mt-4 rounded-lg border border-line bg-white px-4 py-5 sm:px-6"
+        className="card mt-4 px-4 py-5 sm:px-6"
       >
-        <label className="block text-sm font-medium text-ink" htmlFor="lecture-file">
+        <label className="eyebrow block" htmlFor="lecture-file">
           Recording
         </label>
         <input
           id="lecture-file"
           type="file"
           accept={ACCEPT}
-          className="mt-2 block w-full cursor-pointer rounded-md border border-strong-line bg-canvas px-3 py-2 text-sm text-body file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-accent-ink"
+          className="input mt-2 cursor-pointer file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-on-accent hover:file:bg-accent-hover"
           onChange={(event) => pick(event.target.files?.[0] ?? null)}
         />
         {file && (
-          <p className="mt-2 text-xs text-muted">
+          <p className="mt-2 font-mono text-xs text-muted">
             {file.name} · {(file.size / (1024 * 1024)).toFixed(1)} MB
           </p>
         )}
 
-        <label className="mt-5 block text-sm font-medium text-ink" htmlFor="lecture-title">
+        <label className="eyebrow mt-5 block" htmlFor="lecture-title">
           Title
         </label>
         <input
@@ -104,20 +102,17 @@ export function Upload({
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Recursion lecture"
           maxLength={120}
-          className="clay-inset mt-2 block w-full px-3 py-2 text-sm text-body placeholder:text-muted"
+          className="input mt-2"
         />
 
-        <label
-          className="mt-5 block text-sm font-medium text-ink"
-          htmlFor="lecture-language"
-        >
+        <label className="eyebrow mt-5 block" htmlFor="lecture-language">
           Language of the recording
         </label>
         <select
           id="lecture-language"
           value={language}
           onChange={(event) => setLanguage(event.target.value)}
-          className="clay-inset mt-2 block w-full px-3 py-2 text-sm text-body"
+          className="input mt-2"
         >
           {SESSION_LANGUAGES.map((item) => (
             <option key={item.code} value={item.code}>
@@ -131,13 +126,16 @@ export function Upload({
         </p>
 
         {error && (
-          <p role="alert" className="clay-inset mt-5 px-3 py-2 text-sm text-body">
+          <p
+            role="alert"
+            className="well mt-5 border-l-4 border-l-warn px-3 py-2 text-sm text-warn"
+          >
             {error}
           </p>
         )}
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button type="submit" disabled={!file || busy} className={PRIMARY}>
+          <button type="submit" disabled={!file || busy} className="btn btn-primary px-4 py-2.5">
             {busy ? "Uploading…" : "Start the lecture"}
           </button>
           {busy && (

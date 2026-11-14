@@ -243,12 +243,19 @@ reviewing.
 
 These are real and are not hidden by the rest of this note.
 
-1. **No authentication on the API.** Anyone who can reach the port can read
-   the lectures and upload a recording. Acceptable for a single-user demo,
-   not for a deployment.
-2. **No per-IP upload rate limit.** The Phase 0 plan listed one as a
-   mitigation for upload abuse. It is not implemented. The size, duration and
-   type limits are the only upload controls.
+1. **Sign-in is Google-only and optional.** With `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET` unset the API runs open: anyone who can reach
+   the port reads the lectures and uploads a recording. When they are set,
+   the data routes demand a session, but there is no password fallback, no
+   MFA beyond whatever the Google account has, and no account recovery of
+   our own. The open mode is for the local demo; a deployment must set the
+   two variables (and register the redirect URIs).
+2. **Lectures are not scoped per user.** Users and sessions are real —
+   sign-in creates a row, and the session id is what the 401 checks — but
+   the `lectures` table has no owner column, so every signed-in student
+   sees the same lecture list. Acceptable while the class shares one
+   corpus; a multi-tenant deployment needs an owner column and a `WHERE`
+   on every read.
 3. **No per-host concurrency cap on outbound requests.** The batching and
    pacing limits cover the notes workload, but there is no global cap on
    concurrent outbound HTTP calls.

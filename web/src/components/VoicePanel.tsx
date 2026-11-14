@@ -26,21 +26,12 @@ export function VoicePanel({
     room.status === "reconnecting";
 
   return (
-    <section
-      aria-labelledby="voice-heading"
-      className="clay mt-4 rounded-lg border border-line bg-white p-3"
-    >
+    <section aria-labelledby="voice-heading" className="card mt-4 p-3">
       <div className="flex items-center justify-between gap-2">
-        <h2 id="voice-heading" className="text-sm font-semibold text-ink">
+        <h2 id="voice-heading" className="eyebrow">
           Voice tutor
         </h2>
-        <span
-          className={`rounded-md border px-2 py-0.5 text-xs font-medium ${
-            room.micEnabled
-              ? "border-accent text-accent-ink"
-              : "border-strong-line text-muted"
-          }`}
-        >
+        <span className={room.micEnabled ? "chip chip-accent" : "chip"}>
           {room.micEnabled ? "Microphone on" : "Microphone off"}
         </span>
       </div>
@@ -48,13 +39,13 @@ export function VoicePanel({
       <p
         aria-live="polite"
         aria-atomic="true"
-        className="clay-inset mt-2 rounded-md border border-line bg-canvas px-3 py-2 text-sm text-body"
+        className="well mt-2 px-3 py-2 text-sm text-body"
       >
         {state}
       </p>
 
       {room.interrupted ? (
-        <p className="mt-2 rounded-md border border-accent bg-white px-3 py-2 text-sm text-accent-ink">
+        <p className="well mt-2 border-l-4 border-l-accent px-3 py-2 text-sm text-accent-ink">
           You interrupted the tutor. It stopped and is listening to you.
         </p>
       ) : null}
@@ -73,10 +64,7 @@ export function VoicePanel({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <label
-          htmlFor="voice-language"
-          className="text-xs font-medium text-muted"
-        >
+        <label htmlFor="voice-language" className="eyebrow">
           You speak
         </label>
         <select
@@ -84,7 +72,7 @@ export function VoicePanel({
           value={language}
           onChange={(event) => onLanguageChange(event.target.value)}
           disabled={languageLocked}
-          className="clay-inset rounded-md border border-strong-line bg-white px-2 py-1.5 text-sm text-ink disabled:bg-canvas disabled:text-muted"
+          className="input w-auto py-1.5"
         >
           {SESSION_LANGUAGES.map(({ code, label }) => (
             <option key={code} value={code}>
@@ -99,7 +87,7 @@ export function VoicePanel({
           <button
             type="button"
             onClick={() => void room.start()}
-            className="clay-btn clay-accent rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink"
+            className="btn btn-primary"
           >
             Start voice
           </button>
@@ -108,7 +96,7 @@ export function VoicePanel({
           <button
             type="button"
             onClick={() => void room.stop()}
-            className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink"
+            className="btn btn-secondary"
           >
             Cancel
           </button>
@@ -118,14 +106,14 @@ export function VoicePanel({
             <button
               type="button"
               onClick={() => void room.toggleMic()}
-              className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="btn btn-secondary"
             >
               {room.micEnabled ? "Mute microphone" : "Unmute microphone"}
             </button>
             <button
               type="button"
               onClick={() => void room.stop()}
-              className="clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="btn btn-secondary"
             >
               Stop voice
             </button>

@@ -60,10 +60,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
   };
 
   return (
-    <nav
-      aria-label="Table of contents"
-      className="clay rounded-lg border border-line bg-white"
-    >
+    <nav aria-label="Table of contents" className="card overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -71,7 +68,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
         aria-controls="toc-list"
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm font-semibold text-ink"
       >
-        <span>Contents ({headings.length})</span>
+        <span className="eyebrow">Contents ({headings.length})</span>
         <span aria-hidden="true" className="text-muted">
           {open ? "−" : "+"}
         </span>
@@ -89,7 +86,7 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
               data-toc-id={heading.id}
               onClick={() => jump(heading.id)}
               aria-current={currentId === heading.id ? "true" : undefined}
-              className={`block w-full truncate rounded px-2 py-1.5 text-left text-sm hover:bg-canvas ${
+              className={`block w-full truncate border-l-2 px-2 py-1.5 text-left text-sm hover:bg-canvas-deep ${
                 heading.level === 1
                   ? "font-semibold text-ink"
                   : heading.level === 2
@@ -97,8 +94,8 @@ export function TableOfContents({ headings }: { headings: Heading[] }) {
                     : "text-muted"
               } ${
                 currentId === heading.id
-                  ? "bg-canvas font-semibold text-accent-ink"
-                  : ""
+                  ? "border-l-accent bg-accent-soft font-semibold text-accent-ink"
+                  : "border-l-transparent"
               }`}
               style={{ paddingLeft: `${0.5 + (heading.level - 1) * 0.75}rem` }}
             >

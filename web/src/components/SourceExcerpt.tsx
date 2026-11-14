@@ -16,11 +16,8 @@ export function SourceExcerpt({
   );
 
   return (
-    <div
-      tabIndex={-1}
-      className="clay-inset mt-2 rounded-md border border-line bg-canvas px-3 py-2"
-    >
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+    <div tabIndex={-1} className="well mt-2 px-3 py-2">
+      <p className="eyebrow">
         Transcript {formatTime(start)} to {formatTime(end)}
       </p>
       {covering.length === 0 ? (

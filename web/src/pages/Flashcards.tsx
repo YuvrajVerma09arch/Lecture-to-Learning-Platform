@@ -20,11 +20,6 @@ const GRADES = [
   { quality: 5, label: "Easy" },
 ] as const;
 
-const PRIMARY =
-  "clay-btn clay-accent rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-ink disabled:opacity-60";
-const SECONDARY =
-  "clay-btn rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas disabled:opacity-60";
-
 export function Flashcards({
   lectureId,
   lectures,
@@ -34,10 +29,15 @@ export function Flashcards({
   lectures: Lecture[];
   onNavigate: (path: string, params?: Record<string, string>) => void;
 }) {
+  const lecture = lectures.find((item) => item.id === lectureId) ?? null;
+  // A lecture still moving through the pipeline has no deck to fetch:
+  // the shell's poll flips this on the moment it settles.
+  const settled =
+    lecture === null || lecture.status === "ready" || lecture.status === "failed";
   const cards = useAsync(
     () => (lectureId ? api.flashcards(lectureId) : Promise.resolve(null)),
     [lectureId],
-    Boolean(lectureId),
+    Boolean(lectureId) && settled,
   );
 
   const [phase, setPhase] = useState<"browse" | "study" | "done">("browse");
@@ -48,7 +48,6 @@ export function Flashcards({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  const lecture = lectures.find((item) => item.id === lectureId) ?? null;
   const all = cards.data?.cards ?? [];
   const dueCount = all.filter((card) => card.is_due).length;
 
@@ -139,6 +138,7 @@ export function Flashcards({
 
   if (phase === "browse" && all.length === 0) {
     const failed = lecture?.status === "failed";
+    const processing = lecture !== null && !settled;
     return (
       <main id="main" className="mx-auto max-w-3xl px-4 py-6">
         <h1 className="sr-only">Flashcards</h1>
@@ -148,7 +148,13 @@ export function Flashcards({
           </div>
         ) : null}
         <EmptyState
-          title={failed ? "This lecture did not finish" : "No flashcards yet"}
+          title={
+            failed
+              ? "This lecture did not finish"
+              : processing
+                ? "The lecture is still being processed"
+                : "No flashcards yet"
+          }
           body={
             failed
               ? `The recording was processed up to the ${
@@ -156,11 +162,13 @@ export function Flashcards({
                 } stage, which failed. ${
                   lecture?.failure_reason ?? ""
                 }`.trim()
-              : "Generate a deck from this lecture: one question and answer per idea the lecturer explained. Cards you have already seen are never duplicated."
+              : processing
+                ? "The recording is still moving through transcription and notes. Flashcards can be generated once it finishes — this page updates on its own."
+                : "Generate a deck from this lecture: one question and answer per idea the lecturer explained. Cards you have already seen are never duplicated."
           }
           action={
-            failed ? null : (
-              <button type="button" onClick={generate} disabled={generating} className={PRIMARY}>
+            failed || processing ? null : (
+              <button type="button" onClick={generate} disabled={generating} className="btn btn-primary">
                 {generating ? "Generating…" : "Generate flashcards"}
               </button>
             )
@@ -178,8 +186,8 @@ export function Flashcards({
             <ErrorState error={error} onRetry={generate} retryLabel="Try again" />
           </div>
         ) : null}
-        <div className="clay rounded-lg border border-line bg-white px-4 py-5 sm:px-6">
-          <h1 className="text-base font-semibold text-ink">
+        <div className="card px-4 py-5 sm:px-6">
+          <h1 className="font-serif text-lg font-semibold text-ink">
             {all.length} flashcards
           </h1>
           <p className="mt-1 text-sm text-muted">
@@ -188,16 +196,16 @@ export function Flashcards({
               : "None are due yet. Studying again now is allowed, and harmless."}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" onClick={start} className={PRIMARY}>
+            <button type="button" onClick={start} className="btn btn-primary">
               {dueCount > 0 ? `Study ${dueCount} due` : "Study the deck"}
             </button>
-            <button type="button" onClick={generate} disabled={generating} className={SECONDARY}>
+            <button type="button" onClick={generate} disabled={generating} className="btn btn-secondary">
               {generating ? "Generating…" : "Generate more"}
             </button>
             <button
               type="button"
               onClick={() => onNavigate("/chat", { lecture: lectureId })}
-              className={SECONDARY}
+              className="btn btn-secondary"
             >
               Ask a doubt about this lecture
             </button>
@@ -216,13 +224,13 @@ export function Flashcards({
           body={`You graded all ${deck.length} cards. Each one now has its next date; the due cards return here when that date arrives.`}
           action={
             <div className="flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={start} className={PRIMARY}>
+              <button type="button" onClick={start} className="btn btn-primary">
                 Study again
               </button>
               <button
                 type="button"
                 onClick={() => setPhase("browse")}
-                className={SECONDARY}
+                className="btn btn-secondary"
               >
                 Back to the deck
               </button>
@@ -242,12 +250,14 @@ export function Flashcards({
 
   return (
     <main id="main" className="mx-auto max-w-3xl px-4 py-6">
-      <p className="text-sm text-muted" role="status">
+      <p className="eyebrow" role="status">
         Card {position + 1} of {deck.length}
         {card.is_due ? " · was due" : ""}
       </p>
-      <div className="clay mt-2 rounded-lg border border-line bg-white px-4 py-6 sm:px-6">
-        <h1 className="text-lg font-semibold text-ink">{card.question}</h1>
+      <div className="card mt-2 px-4 py-6 sm:px-6">
+        <h1 className="font-serif text-lg font-semibold leading-snug text-ink">
+          {card.question}
+        </h1>
         {revealed ? (
           <>
             <hr className="my-4 border-line" />
@@ -261,7 +271,7 @@ export function Flashcards({
                   type="button"
                   disabled={grading}
                   onClick={() => grade(gradeOption.quality)}
-                  className={SECONDARY}
+                  className="btn btn-secondary"
                 >
                   {gradeOption.label}
                 </button>
@@ -272,7 +282,7 @@ export function Flashcards({
           <button
             type="button"
             onClick={() => setRevealed(true)}
-            className={PRIMARY}
+            className="btn btn-primary"
           >
             Show answer
           </button>

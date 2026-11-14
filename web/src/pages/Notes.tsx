@@ -147,12 +147,12 @@ export function Notes({
     <main id="main" className="mx-auto max-w-5xl px-4 pb-16 pt-4">
       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_17rem] lg:gap-10">
         <div className="order-2 min-w-0 lg:order-1">
-          <p className="text-sm text-muted">
+          <p className="eyebrow">
             {lecture ? `${formatTime(lecture.audio_seconds)} recording` : null}
             {lecture && lecture.audio_seconds ? " · " : ""}
             {payload.segments.length} transcript segments
           </p>
-          <div className="clay mt-2 rounded-lg border border-line bg-white px-4 py-5 sm:px-6">
+          <div className="card mt-2 px-4 py-5 sm:px-6">
             <NotesDocument
               markdown={payload.document}
               segments={payload.segments}
@@ -172,7 +172,7 @@ export function Notes({
                   lecture: lectureId,
                 })
               }
-              className="clay-btn mt-3 w-full rounded-md border border-strong-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-canvas"
+              className="btn btn-secondary mt-3 w-full"
             >
               Ask a doubt about this lecture
             </button>

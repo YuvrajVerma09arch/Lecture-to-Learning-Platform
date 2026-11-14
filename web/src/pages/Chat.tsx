@@ -26,6 +26,11 @@ export function Chat({
   onNavigate: (path: string, params?: Record<string, string>) => void;
 }) {
   const lecture = lectures.find((item) => item.id === lectureId) ?? null;
+  // The tutor only works from a settled lecture: while the pipeline is
+  // still moving there is nothing to answer from, so the voice panel
+  // and the question box wait. The shell's poll re-renders this.
+  const processing =
+    lecture !== null && lecture.status !== "ready" && lecture.status !== "failed";
   const [pickedLanguage, setPickedLanguage] = useState<string | null>(null);
   const sessionLanguage =
     pickedLanguage ?? defaultLanguage(lecture?.language_code);
@@ -111,39 +116,54 @@ export function Chat({
 
   return (
     <main id="main" className="mx-auto max-w-3xl px-4 pb-24 pt-4">
-      <h1 className="text-xl font-semibold tracking-tight text-ink">Doubt chat</h1>
+      <h1 className="font-serif text-xl font-semibold tracking-tight text-ink">
+        Doubt chat
+      </h1>
       <p className="mt-1 text-sm text-muted">
         {lecture ? `About ${lecture.title}. ` : ""}
         Speak to the tutor, or type your question.
       </p>
 
-      <VoicePanel
-        room={room}
-        language={sessionLanguage}
-        onLanguageChange={setPickedLanguage}
-      />
+      {processing ? (
+        <div className="card mt-4 px-4 py-5">
+          <p className="eyebrow">Waiting for the lecture</p>
+          <p className="mt-2 max-w-prose text-sm text-muted">
+            This recording is still being transcribed and turned into notes.
+            The tutor opens here as soon as it finishes — this page updates
+            on its own.
+          </p>
+        </div>
+      ) : (
+        <>
+          <VoicePanel
+            room={room}
+            language={sessionLanguage}
+            onLanguageChange={setPickedLanguage}
+          />
 
-      <div ref={transcriptRef}>
-        <Conversation
-          items={merged}
-          onOpenSource={(seconds) =>
-            onNavigate("/notes", {
-              lecture: lectureId,
-              source: String(Math.round(seconds)),
-            })
-          }
-        />
-      </div>
+          <div ref={transcriptRef}>
+            <Conversation
+              items={merged}
+              onOpenSource={(seconds) =>
+                onNavigate("/notes", {
+                  lecture: lectureId,
+                  source: String(Math.round(seconds)),
+                })
+              }
+            />
+          </div>
 
-      <QuestionForm
-        value={question}
-        onChange={setQuestion}
-        onSubmit={() => void ask()}
-        pending={pending}
-        error={askError}
-        onRetry={() => void ask(lastQuestion.current)}
-        lastAnswerMs={answer ? (answer.timings.total_ms ?? 0) : null}
-      />
+          <QuestionForm
+            value={question}
+            onChange={setQuestion}
+            onSubmit={() => void ask()}
+            pending={pending}
+            error={askError}
+            onRetry={() => void ask(lastQuestion.current)}
+            lastAnswerMs={answer ? (answer.timings.total_ms ?? 0) : null}
+          />
+        </>
+      )}
     </main>
   );
 }

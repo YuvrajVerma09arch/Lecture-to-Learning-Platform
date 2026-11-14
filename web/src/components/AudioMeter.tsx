@@ -45,9 +45,7 @@ export function AudioMeter({
   return (
     <div>
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted">
-          {label}
-        </span>
+        <span className="eyebrow">{label}</span>
         <span aria-hidden="true" className="text-xs text-muted">
           {meter ? `${percent}%` : "no signal"}
         </span>

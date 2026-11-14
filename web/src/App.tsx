@@ -90,7 +90,7 @@ export function App() {
   if (auth.status === "loading") {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-canvas">
-        <p role="status" className="text-sm text-muted">
+        <p role="status" className="eyebrow">
           Loading Lecture to Learning
         </p>
       </main>
@@ -106,7 +106,7 @@ export function App() {
     <div className="min-h-dvh bg-canvas">
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-on-accent"
       >
         Skip to the main content
       </a>
@@ -134,7 +134,7 @@ export function App() {
         <Suspense
           fallback={
             <main className="mx-auto max-w-3xl px-4 py-6">
-              <p role="status" className="text-sm text-muted">
+              <p role="status" className="eyebrow">
                 Loading the doubt chat
               </p>
             </main>

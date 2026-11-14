@@ -1,27 +1,47 @@
 @import "tailwindcss";
 
 /*
- * One accent colour, a neutral ink scale and nothing else. The
- * Devanagari and Gujarati faces are self-hosted, so they are listed
- * after the system font and are only used for the scripts they cover.
+ * Folio: an editorial system.
  *
- * The palette is tuned for claymorphism: a warmer canvas so the white
- * surfaces read as soft blocks resting on it, and a line colour light
- * enough that the shadows (not the borders) do the separating.
+ * A warm paper canvas, ink text, one vermilion accent, and hairline
+ * borders doing all the separating — no soft shadows, no gradients,
+ * no rounded blobs. Surfaces are flat sheets; the hierarchy comes
+ * from rules, spacing and tracked micro-labels.
+ *
+ * Devanagari and Gujarati are self-hosted, so they are listed after
+ * the system faces and are only used for the scripts they cover.
+ * Headings use the system serif for an editorial voice; metadata is
+ * set in the system mono.
  */
 @theme {
-  --color-accent: #0f766e;
-  --color-accent-ink: #115e59;
-  --color-ink: #111827;
-  --color-body: #1f2937;
-  --color-muted: #4b5563;
-  --color-line: #e5e7eb;
-  --color-strong-line: #d1d5db;
-  --color-canvas: #eef0f5;
+  /* The accent: vermilion. `on-accent` flips between the themes so
+     primary buttons keep their contrast in both. */
+  --color-accent: #c03a16;
+  --color-accent-hover: #a02f10;
+  --color-accent-ink: #9a2c0f;
+  --color-accent-soft: #f6e6df;
+  --color-on-accent: #fff8f4;
+
+  --color-ok: #2e6b45;
+  --color-warn: #8a5a10;
+
+  --color-ink: #17140f;
+  --color-body: #3a352d;
+  --color-muted: #6e6759;
+  --color-line: #e2dccf;
+  --color-strong-line: #cfc7b5;
+  --color-canvas: #f4f1ea;
+  --color-canvas-deep: #ebe6dc;
+  --color-surface: #fffdf8;
+  --color-surface-2: #f9f6ef;
 
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans",
     "Noto Sans Devanagari", "Noto Sans Gujarati", "Noto Sans Telugu",
     "Noto Sans Tamil", sans-serif;
+  --font-serif: ui-serif, Georgia, "Iowan Old Style", "Palatino Linotype",
+    Palatino, "Noto Sans Devanagari", "Noto Sans Gujarati", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono",
+    monospace;
 }
 
 @layer base {
@@ -32,21 +52,10 @@
   body {
     margin: 0;
     background-color: var(--color-canvas);
-    background-image:
-      radial-gradient(
-        circle at 15% 0%,
-        color-mix(in srgb, var(--color-accent) 7%, transparent),
-        transparent 45%
-      ),
-      radial-gradient(
-        circle at 85% 100%,
-        color-mix(in srgb, var(--color-accent) 5%, transparent),
-        transparent 40%
-      );
-    background-attachment: fixed;
     color: var(--color-body);
     font-family: var(--font-sans);
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
   }
 
   :focus-visible {
@@ -55,269 +64,276 @@
   }
 
   ::selection {
-    background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    background-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
   }
-}
 
-/*
- * Claymorphism.
- *
- * Soft blocks resting on a soft surface: a large radius, a drop shadow
- * below and a light rim above, so the shape comes from light rather
- * than from a stroke. These rules are deliberately unlayered, so they
- * win over the flat utility classes (border, rounded-lg, bg-white)
- * that the components already carry; nothing has to be removed for
- * them to take effect, and a component without the class still renders
- * exactly as before.
- */
-.clay {
-  border-radius: 1.25rem;
-  /* The rim colour only: the element's own border utilities keep their
-     width and style (a dashed empty state stays dashed). */
-  border-color: rgba(255, 255, 255, 0.7);
-  background: linear-gradient(145deg, #ffffff 0%, #f7f8fb 100%);
-  box-shadow:
-    10px 10px 24px color-mix(in srgb, var(--color-ink) 8%, transparent),
-    -6px -6px 16px rgba(255, 255, 255, 0.9),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.95);
-}
-
-/* The dashed "nothing here yet" outline keeps its grey dashes. */
-.clay-dashed {
-  border-color: var(--color-strong-line);
-}
-
-/* An accent-rimmed block (the tutor's answers): the same light, with
-   the rim tinted so the card still reads as the tutor speaking. */
-.clay-rim-accent {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, white);
-}
-
-/* A block sitting lower: inputs, transcript wells, quoted excerpts. */
-.clay-inset {
-  border-radius: 0.9rem;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  background: linear-gradient(145deg, #f1f3f7 0%, #fafbfd 100%);
-  box-shadow:
-    inset 4px 4px 10px color-mix(in srgb, var(--color-ink) 7%, transparent),
-    inset -3px -3px 8px rgba(255, 255, 255, 0.95);
-}
-
-/* A raised pill: it presses down when held. */
-.clay-btn {
-  border-radius: 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.65);
-  box-shadow:
-    5px 5px 12px color-mix(in srgb, var(--color-ink) 9%, transparent),
-    -4px -4px 10px rgba(255, 255, 255, 0.9),
-    inset 1px 1px 1px rgba(255, 255, 255, 0.85);
-  transition:
-    box-shadow 120ms ease,
-    transform 120ms ease;
-}
-
-.clay-btn:hover:not(:disabled) {
-  box-shadow:
-    7px 7px 16px color-mix(in srgb, var(--color-ink) 10%, transparent),
-    -5px -5px 12px rgba(255, 255, 255, 0.95),
-    inset 1px 1px 1px rgba(255, 255, 255, 0.85);
-}
-
-.clay-btn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow:
-    inset 4px 4px 9px color-mix(in srgb, var(--color-ink) 10%, transparent),
-    inset -3px -3px 7px rgba(255, 255, 255, 0.9);
-}
-
-/* The accent buttons keep their colour; only the light changes. */
-.clay-accent {
-  background: linear-gradient(145deg, #14b8a6 0%, var(--color-accent) 100%);
-  color: #ffffff;
-}
-
-.clay-accent:hover:not(:disabled) {
-  background: linear-gradient(145deg, var(--color-accent) 0%, var(--color-accent-ink) 100%);
-}
-
-/* Nav pills in the header sit flush: same light, no drop. */
-.clay-nav {
-  border-radius: 0.75rem;
-  border: 1px solid transparent;
-}
-
-/* The sticky header: a soft block with light under it, not a ruled line. */
-.clay-bar {
-  border-bottom: none;
-  background: linear-gradient(145deg, #ffffff 0%, #f7f8fb 100%);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--color-ink) 7%, transparent);
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
 }
 
 /*
  * Dark mode.
  *
  * `public/theme-init.js` puts `.dark` on <html> before first paint.
- * Like the clay rules above, these are unlayered, so they win over the
- * light gradients and the flat utilities (bg-white, text-ink) without
- * touching a single component.
- *
- * Two tokens are deliberately left alone: `--color-accent` stays teal
- * because white text on it keeps its contrast, and `--color-white` is
- * shared with `text-white`, so surfaces that used it are restyled with
- * a targeted rule instead.
+ * These overrides are unlayered, so they win over the theme variables
+ * (which Tailwind emits in `@layer theme`) without touching a single
+ * component: every utility that reads a token re-reads it per theme.
  */
 .dark {
   color-scheme: dark;
-  --color-ink: #e2e8f0;
-  --color-body: #cbd5e1;
-  --color-muted: #94a3b8;
-  --color-line: #26324a;
-  --color-strong-line: #3a4763;
-  --color-canvas: #0b1220;
+  --color-accent: #ff6b3d;
+  --color-accent-hover: #ff8259;
+  --color-accent-ink: #ff9b78;
+  --color-accent-soft: #38201a;
+  --color-on-accent: #1f0d05;
+
+  --color-ok: #74d0a0;
+  --color-warn: #e0b060;
+
+  --color-ink: #f2ede3;
+  --color-body: #d6cfc2;
+  --color-muted: #9a9184;
+  --color-line: #332e27;
+  --color-strong-line: #4a433a;
+  --color-canvas: #14120f;
+  --color-canvas-deep: #100e0c;
+  --color-surface: #1d1a16;
+  --color-surface-2: #24201b;
 }
 
-/* Surfaces that carried `bg-white` rather than a token. */
-.dark .bg-white {
-  background-color: #131c2e;
-}
-
-.dark .hover\:bg-white:hover {
-  background-color: #1b2539;
-}
-
-/* Links and the active heading: teal-200 reads on the dark canvas. */
-.dark .text-accent-ink {
-  color: #5eead4;
-}
-
-/* The clay lights are inverted: shadow below, dark rim above. */
-.dark .clay {
-  border-color: rgba(255, 255, 255, 0.06);
-  background: linear-gradient(145deg, #161f31 0%, #121a2a 100%);
-  box-shadow:
-    10px 10px 24px rgba(0, 0, 0, 0.45),
-    -6px -6px 16px rgba(255, 255, 255, 0.03),
-    inset 1px 1px 2px rgba(255, 255, 255, 0.05);
-}
-
-/* The dashed "nothing here yet" outline keeps its grey dashes. */
-.dark .clay-dashed {
-  border-color: var(--color-strong-line);
-}
-
-/* The tutor's rim stays accent-tinted, mixed toward the dark-mode teal. */
-.dark .clay-rim-accent {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, #5eead4);
-}
-
-/* Wells sit lower: darker still, light only on the bottom-right. */
-.dark .clay-inset {
-  border-color: rgba(255, 255, 255, 0.05);
-  background: linear-gradient(145deg, #0f1726 0%, #131c2e 100%);
-  box-shadow:
-    inset 4px 4px 10px rgba(0, 0, 0, 0.5),
-    inset -3px -3px 8px rgba(255, 255, 255, 0.03);
-}
-
-.dark .clay-btn {
-  border-color: rgba(255, 255, 255, 0.07);
-  box-shadow:
-    5px 5px 12px rgba(0, 0, 0, 0.45),
-    -4px -4px 10px rgba(255, 255, 255, 0.04),
-    inset 1px 1px 1px rgba(255, 255, 255, 0.06);
-}
-
-.dark .clay-btn:hover:not(:disabled) {
-  box-shadow:
-    7px 7px 16px rgba(0, 0, 0, 0.5),
-    -5px -5px 12px rgba(255, 255, 255, 0.05),
-    inset 1px 1px 1px rgba(255, 255, 255, 0.07);
-}
-
-.dark .clay-btn:active:not(:disabled) {
-  box-shadow:
-    inset 4px 4px 9px rgba(0, 0, 0, 0.55),
-    inset -3px -3px 7px rgba(255, 255, 255, 0.04);
-}
-
-/* The header, last, so it wins over `.dark .clay` where both apply. */
-.dark .clay-bar {
-  background: linear-gradient(145deg, #151e30 0%, #121a2a 100%);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .clay-btn {
-    transition: none;
+/*
+ * Components. Layered below the utilities, so a per-instance utility
+ * (a wider padding, a different border) still wins.
+ */
+@layer components {
+  /* Buttons: one shape, three weights. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition:
+      background-color 140ms ease,
+      border-color 140ms ease,
+      color 140ms ease;
   }
 
-  .clay-btn:active:not(:disabled) {
-    transform: none;
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+
+  .btn-secondary {
+    background-color: var(--color-surface);
+    border-color: var(--color-strong-line);
+    color: var(--color-ink);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-canvas-deep);
+  }
+
+  .btn-quiet {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--color-muted);
+  }
+
+  .btn-quiet:hover:not(:disabled) {
+    background-color: var(--color-canvas-deep);
+    color: var(--color-ink);
+  }
+
+  /* A flat sheet: the default block on the canvas. */
+  .card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 10px;
+  }
+
+  /* A recessed area inside a sheet: wells, excerpts, quoted turns. */
+  .well {
+    background-color: var(--color-canvas-deep);
+    border: 1px solid var(--color-line);
+    border-radius: 8px;
+  }
+
+  /* The tracked micro-label that carries the editorial voice. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  .input {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--color-strong-line);
+    background-color: var(--color-surface);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--color-ink);
+  }
+
+  .input::placeholder {
+    color: var(--color-muted);
+  }
+
+  .input:focus {
+    border-color: var(--color-accent);
+  }
+
+  .input:disabled {
+    background-color: var(--color-canvas-deep);
+    color: var(--color-muted);
+  }
+
+  .link {
+    color: var(--color-accent-ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .link:hover {
+    color: var(--color-accent);
+  }
+
+  /* Status chips: a pill of tinted paper, one tone per verdict. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-strong-line);
+    background-color: var(--color-canvas-deep);
+    color: var(--color-muted);
+    padding: 0.125rem 0.625rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .chip-ok {
+    border-color: color-mix(in srgb, var(--color-ok) 45%, transparent);
+    background-color: color-mix(in srgb, var(--color-ok) 12%, transparent);
+    color: var(--color-ok);
+  }
+
+  .chip-warn {
+    border-color: color-mix(in srgb, var(--color-warn) 45%, transparent);
+    background-color: color-mix(in srgb, var(--color-warn) 12%, transparent);
+    color: var(--color-warn);
+  }
+
+  .chip-accent {
+    border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+    background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+    color: var(--color-accent-ink);
   }
 }
 
-/* The notes document. */
-.notes-body {
+/*
+ * The notes document: a reading column. Element styles only — the
+ * renderers above it carry their own utilities for what they need,
+ * and utilities always win over this layer.
+ */
+.doc {
   font-size: 1rem;
   line-height: 1.75;
   color: var(--color-body);
   overflow-wrap: break-word;
 }
 
-.notes-body h1 {
-  font-size: 1.5rem;
-  line-height: 1.3;
+.doc h1 {
+  font-family: var(--font-serif);
+  font-size: 1.75rem;
+  line-height: 1.25;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--color-ink);
 }
 
-.notes-body h2 {
-  font-size: 1.25rem;
-  line-height: 1.4;
+.doc h2 {
+  font-family: var(--font-serif);
+  font-size: 1.375rem;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+
+.doc h3 {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  line-height: 1.45;
   font-weight: 600;
   color: var(--color-ink);
 }
 
-.notes-body h3 {
-  font-size: 1.0625rem;
-  line-height: 1.5;
-  font-weight: 600;
-  color: var(--color-ink);
-}
-
-.notes-body ul,
-.notes-body ol {
+.doc ul,
+.doc ol {
   margin: 1rem 0 0 1.25rem;
   padding: 0;
   list-style: disc;
 }
 
-.notes-body ol {
+.doc ol {
   list-style: decimal;
 }
 
-.notes-body li {
+.doc li {
   margin-top: 0.375rem;
 }
 
-.notes-body strong {
+.doc strong {
   font-weight: 600;
   color: var(--color-ink);
 }
 
-.notes-body hr {
+.doc hr {
   margin: 2rem 0;
   border: 0;
   border-top: 1px solid var(--color-line);
 }
 
-.notes-body .math-inline .katex {
+.doc .math-inline .katex {
   font-size: 1.05em;
 }
 
 /* KaTeX blocks can be wider than a phone. */
-.notes-body .katex-display {
+.doc .katex-display {
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0.25rem 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
 }

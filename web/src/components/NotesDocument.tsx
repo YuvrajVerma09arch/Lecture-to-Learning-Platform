@@ -61,11 +61,7 @@ function headingId(node?: HastNode): string {
 
 function Heading1({ node, children }: { node?: HastNode; children?: ReactNode }) {
   return (
-    <h1
-      id={headingId(node)}
-      tabIndex={-1}
-      className="mt-2 text-2xl font-bold tracking-tight text-ink outline-none"
-    >
+    <h1 id={headingId(node)} tabIndex={-1} className="mt-2 outline-none">
       {children}
     </h1>
   );
@@ -76,7 +72,7 @@ function Heading2({ node, children }: { node?: HastNode; children?: ReactNode })
     <h2
       id={headingId(node)}
       tabIndex={-1}
-      className="mt-8 scroll-mt-24 text-xl font-semibold tracking-tight text-ink outline-none"
+      className="mt-8 scroll-mt-24 outline-none"
     >
       {children}
     </h2>
@@ -88,7 +84,7 @@ function Heading3({ node, children }: { node?: HastNode; children?: ReactNode })
     <h3
       id={headingId(node)}
       tabIndex={-1}
-      className="mt-6 scroll-mt-24 text-base font-semibold text-ink outline-none"
+      className="mt-6 scroll-mt-24 outline-none"
     >
       {children}
     </h3>
@@ -112,7 +108,7 @@ function Paragraph({ node, children }: { node?: HastNode; children?: ReactNode }
         data-source-start={span.start}
         onClick={() => onToggleSource(span)}
         aria-expanded={active}
-        className="clay-btn inline-flex items-center gap-2 rounded-md border border-strong-line bg-canvas px-2.5 py-1.5 text-sm font-medium text-accent-ink hover:bg-white"
+        className="inline-flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm font-medium text-accent-ink hover:bg-accent-soft"
       >
         <span aria-hidden="true">{active ? "▾" : "▸"}</span>
         <span>
@@ -140,11 +136,9 @@ function Blockquote({
     return (
       <aside
         aria-label="Visual material not in the audio"
-        className="mt-4 rounded-md border border-strong-line border-l-4 bg-canvas px-3 py-2"
+        className="well mt-4 border-l-4 border-l-warn px-3 py-2"
       >
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink">
-          Visual material not in the audio
-        </p>
+        <p className="eyebrow">Visual material not in the audio</p>
         <div className="mt-1 text-sm text-body">{children}</div>
       </aside>
     );
@@ -193,17 +187,12 @@ const COMPONENTS = {
   blockquote: Blockquote,
   code: Code,
   pre: ({ children }: { children?: ReactNode }) => (
-    <pre className="clay-inset mt-4 overflow-x-auto rounded-md border border-line bg-canvas p-3 text-sm">
+    <pre className="well mt-4 overflow-x-auto p-3 text-sm">
       {children}
     </pre>
   ),
   a: ({ href, children }: { href?: string; children?: ReactNode }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="text-accent-ink underline underline-offset-2"
-    >
+    <a href={href} target="_blank" rel="noreferrer noopener" className="link">
       {children}
     </a>
   ),
@@ -213,7 +202,7 @@ const COMPONENTS = {
     </div>
   ),
   th: ({ children }: { children?: ReactNode }) => (
-    <th className="border border-line bg-canvas px-2 py-1 text-left font-semibold text-ink">
+    <th className="border border-line bg-surface-2 px-2 py-1 text-left font-semibold text-ink">
       {children}
     </th>
   ),
@@ -236,7 +225,7 @@ export function NotesDocument({
   const context: NotesContextValue = { activeSpan, onToggleSource, segments };
 
   return (
-    <div className="notes-body">
+    <div className="doc">
       <NotesContext.Provider value={context}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkMath, remarkHeadingIds]}

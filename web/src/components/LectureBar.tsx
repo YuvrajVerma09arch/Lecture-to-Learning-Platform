@@ -2,6 +2,13 @@
 import type { Lecture } from "../types";
 import { STATUS_LABELS } from "../lib/format";
 
+/** One tone per verdict: settled-ok, settled-bad, still moving. */
+function chipTone(status: string): string {
+  if (status === "ready") return "chip chip-ok";
+  if (status === "failed") return "chip chip-warn";
+  return "chip chip-accent";
+}
+
 export function LectureBar({
   lectures,
   selectedId,
@@ -18,8 +25,8 @@ export function LectureBar({
 
   if (loading) {
     return (
-      <div className="border-b border-line bg-canvas px-4 py-3">
-        <p className="text-sm text-muted" role="status">
+      <div className="border-b border-line bg-surface-2 px-4 py-3">
+        <p className="eyebrow" role="status">
           Loading lectures
         </p>
       </div>
@@ -28,7 +35,7 @@ export function LectureBar({
 
   if (lectures.length === 0) {
     return (
-      <div className="border-b border-line bg-canvas px-4 py-3">
+      <div className="border-b border-line bg-surface-2 px-4 py-3">
         <p className="text-sm text-muted">
           No lectures yet. A lecture appears here once its recording has been
           processed.
@@ -37,12 +44,19 @@ export function LectureBar({
     );
   }
 
+  const detail = [
+    selected?.failed_stage ? `at the ${selected.failed_stage} stage` : null,
+    selected?.failure_reason ?? null,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+
   return (
-    <div className="border-b border-line bg-canvas px-4 py-3">
-      <div className="mx-auto flex max-w-5xl flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+    <div className="border-b border-line bg-surface-2 px-4 py-3">
+      <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
         <label
           htmlFor="lecture-picker"
-          className="text-sm font-medium text-ink"
+          className="eyebrow shrink-0"
         >
           Lecture
         </label>
@@ -50,7 +64,7 @@ export function LectureBar({
           id="lecture-picker"
           value={selectedId ?? ""}
           onChange={(event) => onSelect(event.target.value)}
-          className="clay-inset min-w-0 flex-1 rounded-md border border-strong-line bg-white px-3 py-2 text-sm text-ink"
+          className="input min-w-0 flex-1"
         >
           {lectures.map((lecture) => (
             <option key={lecture.id} value={lecture.id}>
@@ -59,15 +73,10 @@ export function LectureBar({
           ))}
         </select>
         {status ? (
-          <p className="text-sm text-muted">
-            <span className="font-medium text-ink">Status:</span> {status}
-            {selected?.failed_stage
-              ? ` at the ${selected.failed_stage} stage`
-              : ""}
-            {selected?.failure_reason
-              ? ` — ${selected.failure_reason}`
-              : ""}
-          </p>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+            <span className={chipTone(selected?.status ?? "")}>{status}</span>
+            {detail ? <span className="min-w-0">{detail}</span> : null}
+          </div>
         ) : null}
       </div>
     </div>
