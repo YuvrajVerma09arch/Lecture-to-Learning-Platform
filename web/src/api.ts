@@ -7,6 +7,7 @@
  * Vite dev server proxies `/api` to port 8000.
  */
 import type {
+  AuthState,
   ChatAnswer,
   ChatSearchResult,
   Flashcard,
@@ -16,6 +17,7 @@ import type {
   LivekitToken,
   NotesPayload,
   Readiness,
+  UploadAccepted,
 } from "./types";
 
 const BASE: string = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
@@ -36,9 +38,17 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
+    const body = init?.body;
+    // A FormData body must keep the browser's own multipart boundary, so
+    // the JSON content type is set only for the JSON calls.
+    const headers =
+      body && !(body instanceof FormData)
+        ? { "Content-Type": "application/json" }
+        : undefined;
     response = await fetch(`${BASE}${path}`, {
-      headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+      credentials: "include",
       ...init,
+      headers: { ...headers, ...init?.headers },
     });
   } catch {
     throw new ApiError(
@@ -73,6 +83,16 @@ export const api = {
   health: () => request<{ status: string; time: number }>("/api/health"),
 
   ready: () => request<Readiness>("/api/ready"),
+
+  /** The boot probe: never rejects; `user` is null in open mode. */
+  me: () => request<AuthState>("/api/auth/me"),
+
+  /** Where to send the browser for Google sign-in. */
+  login: (next = "/") =>
+    `${BASE}/api/auth/google?next=${encodeURIComponent(next)}`,
+
+  /** End the session. The backend clears the cookie. */
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
   lectures: () => request<{ lectures: Lecture[] }>("/api/lectures"),
 
@@ -118,4 +138,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ quality }),
     }),
+
+  /** Hand a recording to the pipeline. Returns as soon as it is accepted. */
+  upload: (file: File, title: string, languageCode: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("title", title);
+    form.append("language_code", languageCode);
+    return request<UploadAccepted>("/api/lectures/upload", {
+      method: "POST",
+      body: form,
+    });
+  },
 };

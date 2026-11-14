@@ -114,3 +114,27 @@ export interface Readiness {
   checks: Record<string, { ok: boolean; error?: string; required_for?: string }>;
   time: number;
 }
+
+/** The signed-in student, as `/api/auth/me` reports it. */
+export interface AuthUser {
+  id: string;
+  google_sub: string;
+  email: string | null;
+  name: string | null;
+}
+
+/**
+ * The boot probe: who we are, and whether Google sign-in is on.
+ * `user` is null in open mode (no credentials configured).
+ */
+export interface AuthState {
+  user: AuthUser | null;
+  google_oauth: boolean;
+}
+
+/** What `POST /api/lectures/upload` answers once the file is accepted. */
+export interface UploadAccepted {
+  status: string;
+  filename: string;
+  size_bytes: number;
+}
