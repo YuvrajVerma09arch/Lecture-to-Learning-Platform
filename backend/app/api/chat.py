@@ -11,12 +11,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as db_mod
 from ..logging_setup import get_logger
 from ..retrieval import fts, rerank
+from .auth import require_user
 
 log = get_logger(__name__)
 
@@ -55,7 +56,10 @@ class ChatResponse(BaseModel):
 
 
 @router.post("", response_model=ChatResponse)
-async def ask(request: ChatRequest) -> ChatResponse:
+async def ask(
+    request: ChatRequest,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> ChatResponse:
     """Answer a question from the lecture notes.
 
     When the lecture does not cover the question, this says so rather
@@ -67,13 +71,18 @@ async def ask(request: ChatRequest) -> ChatResponse:
     t0 = time.monotonic()
     with db_mod.get_conn() as conn:
         if request.lecture_id:
-            lecture = conn.execute(
-                "SELECT id FROM lectures WHERE id=?", (request.lecture_id,)
-            ).fetchone()
-            if lecture is None:
+            # Someone else's lecture id is indistinguishable from an
+            # unknown one: both answer 404.
+            if db_mod.owned_lecture(conn, request.lecture_id, user["id"]) is None:
                 raise HTTPException(status_code=404, detail="No such lecture")
+        # Scoped even with no lecture id: an unscoped search would hand
+        # one student another student's segments as "context".
         candidates = await fts.hybrid_search(
-            conn, request.question, lecture_id=request.lecture_id, limit=request.top_k
+            conn,
+            request.question,
+            lecture_id=request.lecture_id,
+            limit=request.top_k,
+            owner_id=user["id"],
         )
     settings_timings["retrieval_ms"] = (time.monotonic() - t0) * 1000
 
@@ -112,15 +121,23 @@ async def ask(request: ChatRequest) -> ChatResponse:
 
 
 @router.get("/search")
-async def search(q: str, lecture_id: str | None = None, limit: int = 20) -> dict[str, Any]:
+async def search(
+    q: str,
+    lecture_id: str | None = None,
+    limit: int = 20,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     """Search the lecture corpus without asking the model.
 
     Useful for the notes reader's "jump to source" links, and for
-    checking retrieval on its own.
+    checking retrieval on its own. Scoped to the caller's own
+    lectures; an unknown or someone else's ``lecture_id`` simply
+    matches nothing, which is the same 200-with-no-results answer an
+    unknown id has always had.
     """
     with db_mod.get_conn() as conn:
         results = await fts.hybrid_search(
-            conn, q, lecture_id=lecture_id, limit=limit
+            conn, q, lecture_id=lecture_id, limit=limit, owner_id=user["id"]
         )
     return {
         "query": q,

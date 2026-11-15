@@ -14,13 +14,22 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 
 from .. import db as db_mod
 from ..config import get_settings
 from ..logging_setup import get_logger
 from ..pipeline import ingest as ingest_mod
 from ..pipeline import orchestrator
+from .auth import require_user
 
 log = get_logger(__name__)
 
@@ -55,6 +64,7 @@ async def upload_lecture(
     file: UploadFile = File(...),  # noqa: B008 - FastAPI dependency
     title: str = Form(...),
     language_code: str = Form("en-IN"),
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
 ) -> dict[str, Any]:
     """Accept a lecture recording and start the pipeline.
 
@@ -115,11 +125,11 @@ async def upload_lecture(
         extra={"size_bytes": size, "language_code": language_code, "title": title[:120]},
     )
 
-    background.add_task(_run_pipeline, target, title, language_code)
+    background.add_task(_run_pipeline, target, title, language_code, user["id"])
     return {"status": "accepted", "filename": target.name, "size_bytes": size}
 
 
-def _run_pipeline(path: Path, title: str, language_code: str) -> None:
+def _run_pipeline(path: Path, title: str, language_code: str, owner_id: str) -> None:
     """Run the pipeline off the request thread."""
     from ..logging_setup import configure_logging
 
@@ -128,7 +138,7 @@ def _run_pipeline(path: Path, title: str, language_code: str) -> None:
     async def go() -> None:
         try:
             result = await orchestrator.run_notes_pipeline(
-                path, title=title, language_code=language_code
+                path, title=title, language_code=language_code, owner_id=owner_id
             )
             log.info(
                 "lecture processed",
@@ -151,20 +161,24 @@ def _run_pipeline(path: Path, title: str, language_code: str) -> None:
 
 
 @router.get("")
-async def list_lectures() -> dict[str, Any]:
+async def list_lectures(
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     with db_mod.get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM lectures ORDER BY created_at DESC LIMIT 100"
+            "SELECT * FROM lectures WHERE owner_id=? ORDER BY created_at DESC LIMIT 100",
+            (user["id"],),
         ).fetchall()
     return {"lectures": [_serialize_lecture(r) for r in rows]}
 
 
 @router.get("/{lecture_id}")
-async def get_lecture(lecture_id: str) -> dict[str, Any]:
+async def get_lecture(
+    lecture_id: str,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     with db_mod.get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM lectures WHERE id=?", (lecture_id,)
-        ).fetchone()
+        row = db_mod.owned_lecture(conn, lecture_id, user["id"])
         if row is None:
             raise HTTPException(status_code=404, detail="No such lecture")
         stages = db_mod.get_stage_states(conn, lecture_id)
@@ -193,12 +207,13 @@ async def get_lecture(lecture_id: str) -> dict[str, Any]:
 
 
 @router.get("/{lecture_id}/notes")
-async def get_notes(lecture_id: str) -> dict[str, Any]:
+async def get_notes(
+    lecture_id: str,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     """The merged notes document, plus the source segments."""
     with db_mod.get_conn() as conn:
-        lecture = conn.execute(
-            "SELECT * FROM lectures WHERE id=?", (lecture_id,)
-        ).fetchone()
+        lecture = db_mod.owned_lecture(conn, lecture_id, user["id"])
         if lecture is None:
             raise HTTPException(status_code=404, detail="No such lecture")
         note = conn.execute(
