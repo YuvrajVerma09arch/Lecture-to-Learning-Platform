@@ -209,7 +209,10 @@ def store_embeddings(
 
 
 def load_embeddings(
-    conn: sqlite3.Connection, *, lecture_id: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    lecture_id: str | None = None,
+    owner_id: str | None = None,
 ) -> list[EmbeddedSegment]:
     """Load every embedded segment, with its vector."""
     ensure_schema(conn)
@@ -219,10 +222,16 @@ def load_embeddings(
         FROM segment_embeddings e
         JOIN segments s ON s.id = e.segment_id
     """
+    clauses: list[str] = []
     params: list[Any] = []
     if lecture_id is not None:
-        sql += " WHERE s.lecture_id = ?"
+        clauses.append("s.lecture_id = ?")
         params.append(lecture_id)
+    if owner_id is not None:
+        clauses.append("s.lecture_id IN (SELECT id FROM lectures WHERE owner_id = ?)")
+        params.append(owner_id)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     rows = conn.execute(sql, params).fetchall()
     return [
         EmbeddedSegment(
@@ -244,10 +253,11 @@ def semantic_search(
     query_vector: list[float],
     *,
     lecture_id: str | None = None,
+    owner_id: str | None = None,
     limit: int = 20,
 ) -> list[tuple[EmbeddedSegment, float]]:
     """Rank the corpus by cosine similarity to the query."""
-    corpus = load_embeddings(conn, lecture_id=lecture_id)
+    corpus = load_embeddings(conn, lecture_id=lecture_id, owner_id=owner_id)
     if not corpus:
         return []
     scored = [(seg, cosine(query_vector, seg.vector)) for seg in corpus]

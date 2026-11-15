@@ -141,6 +141,7 @@ def lexical_search(
     query: str,
     *,
     lecture_id: str | None = None,
+    owner_id: str | None = None,
     limit: int = 20,
 ) -> list[RetrievedSegment]:
     """Run the lexical stage.
@@ -148,6 +149,9 @@ def lexical_search(
     Returns candidates ordered by relevance. FTS5's ``bm25()`` returns a
     value where *lower is better* and it is negative for matches, so the
     score is normalised into a positive relevance number.
+
+    ``owner_id`` restricts the corpus to that user's lectures; leave it
+    ``None`` only where the caller has already established the scope.
     """
     match = build_match_query(query)
     if not match:
@@ -165,6 +169,13 @@ def lexical_search(
     if lecture_id is not None:
         sql += " AND s.lecture_id = ?"
         params.append(lecture_id)
+    if owner_id is not None:
+        # Ownership is enforced in SQL, not by filtering afterwards:
+        # bm25 normalisation happens over the rows that come back, so a
+        # post-filter would rescale scores against a corpus the caller
+        # was never allowed to see.
+        sql += " AND s.lecture_id IN (SELECT id FROM lectures WHERE owner_id = ?)"
+        params.append(owner_id)
     sql += " ORDER BY rank LIMIT ?"
     params.append(limit)
 
@@ -409,6 +420,7 @@ async def hybrid_search(
     query: str,
     *,
     lecture_id: str | None = None,
+    owner_id: str | None = None,
     limit: int = 20,
 ) -> list[RetrievedSegment]:
     """Search with both stages and combine them.
@@ -418,17 +430,21 @@ async def hybrid_search(
     ask in Hinglish about a lecture in another Indian language, so it
     carries the larger weight. If the embedding provider is unavailable,
     the lexical result is returned unchanged.
+
+    ``owner_id`` scopes both stages to one student's lectures.
     """
     from . import embeddings as emb_mod
 
-    lexical = lexical_search(conn, query, lecture_id=lecture_id, limit=limit)
+    lexical = lexical_search(
+        conn, query, lecture_id=lecture_id, owner_id=owner_id, limit=limit
+    )
 
     query_vector = await emb_mod.embed_question(query)
     if query_vector is None:
         return lexical
 
     semantic = emb_mod.semantic_search(
-        conn, query_vector, lecture_id=lecture_id, limit=limit
+        conn, query_vector, lecture_id=lecture_id, owner_id=owner_id, limit=limit
     )
     if not semantic:
         return lexical
