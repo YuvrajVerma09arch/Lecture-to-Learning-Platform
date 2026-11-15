@@ -224,10 +224,120 @@ class TutorState:
     timings: TurnTimings = field(default_factory=TurnTimings)
     #: The question the student asked, for the log line.
     question: str = ""
+    #: What the lecture is about, loaded once at session start so the
+    #: tutor knows the subject before the student's first question.
+    lecture_title: str = ""
+    lecture_summary: str = ""
+    lecture_topics: str = ""
 
     def reset_turn(self) -> None:
         self.timings = TurnTimings()
         self.question = ""
+
+
+#: How much of the notes summary may enter the instructions. The summary
+#: is a genuine overview of the lecture; a bound keeps a long one from
+#: crowding out the rules that follow it.
+MAX_SUMMARY_CHARS = 600
+
+#: How many section headings may be listed as the lecture's topics.
+MAX_TOPICS = 8
+
+#: A level-2 heading in the notes document. The document is generated
+#: from a fixed template, so this is a stable shape to read, not a guess.
+_HEADING = re.compile(r"^##\s+(.+)$")
+
+#: Headings that are structure, not subject matter.
+_NOT_TOPIC_HEADINGS = ("summary", "key terms")
+
+
+def _topics_from_notes(document: str) -> str:
+    """The section headings of the notes, as a comma-separated list.
+
+    The heading order is the lecture's own order, so the topics read the
+    way the lecture was taught.
+    """
+    topics: list[str] = []
+    for line in document.splitlines():
+        match = _HEADING.match(line)
+        if not match:
+            continue
+        heading = match.group(1).strip()
+        if heading.lower() in _NOT_TOPIC_HEADINGS:
+            continue
+        if heading and heading not in topics:
+            topics.append(heading)
+        if len(topics) >= MAX_TOPICS:
+            break
+    return ", ".join(topics)
+
+
+def load_lecture_context(state: TutorState) -> None:
+    """Fill in what the lecture is about, for this session's instructions.
+
+    The worker calls this once at session start. The tutor otherwise
+    begins every session knowing only an opaque id -- it could not say
+    what the lecture was about, or recognise a question about the lecture
+    as being about *this* lecture, until the first search.
+
+    A missing lecture, a missing note, or an unreadable database leaves
+    the fields empty rather than raising: this is orientation, and a
+    session must never fail to start over it.
+    """
+    if not state.lecture_id:
+        return
+
+    from app import db as db_mod
+
+    try:
+        with db_mod.get_conn() as conn:
+            row = conn.execute(
+                "SELECT l.title, n.summary, n.document "
+                "FROM lectures l LEFT JOIN notes n ON n.lecture_id = l.id "
+                "WHERE l.id = ?",
+                (state.lecture_id,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "lecture context could not be loaded",
+            extra={"lecture_id": state.lecture_id, "error": str(exc)[:200]},
+        )
+        return
+
+    if row is None:
+        return
+    state.lecture_title = (row["title"] or "").strip()
+    state.lecture_summary = (row["summary"] or "").strip()[:MAX_SUMMARY_CHARS]
+    state.lecture_topics = _topics_from_notes(row["document"] or "")
+
+
+def instructions_for(state: TutorState) -> str:
+    """The system instructions for one session.
+
+    The base rules are ``INSTRUCTIONS`` and never change -- every
+    grounding, language and speech rule lives there. When the lecture
+    context loaded, a short orientation block is appended so the tutor
+    knows the subject; it explicitly does not relax the rule that content
+    answers come from ``search_lecture``.
+    """
+    if not state.lecture_title:
+        return INSTRUCTIONS
+    lines = [
+        INSTRUCTIONS,
+        "",
+        "This session's lecture:",
+        f"- Title: {state.lecture_title}",
+    ]
+    if state.lecture_summary:
+        lines.append(f"- What it covers: {state.lecture_summary}")
+    if state.lecture_topics:
+        lines.append(f"- Main topics: {state.lecture_topics}")
+    lines.append(
+        "- This block is orientation only: it says what the lecture is "
+        "about. Answers about its content still come only from "
+        "search_lecture."
+    )
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------
@@ -597,8 +707,8 @@ def build_session(state: TutorState) -> Any:
 
 
 def build_agent(state: TutorState) -> Agent:
-    """The agent itself."""
+    """The agent itself, told what this session's lecture is about."""
     return CleanSpeechAgent(
-        instructions=INSTRUCTIONS,
+        instructions=instructions_for(state),
         tools=[make_lookup_tool(state)],
     )

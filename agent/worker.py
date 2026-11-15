@@ -52,6 +52,7 @@ from .tutor import (  # noqa: E402
     build_session,
     language_for_room,
     lecture_id_from_room,
+    load_lecture_context,
 )
 
 log = get_logger(__name__)
@@ -98,6 +99,9 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
     state = TutorState()
     state.lecture_id = lecture_id_from_room(ctx.room.name)
     state.language = language_for_room(ctx.room.name, ctx.room.metadata)
+    # What the lecture is about, before the student says anything: the
+    # agent is built below, and its instructions read these fields.
+    load_lecture_context(state)
 
     log.info(
         "tutor session starting",
@@ -105,6 +109,7 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
             "room": ctx.room.name,
             "lecture_id": state.lecture_id,
             "language": state.language,
+            "lecture_title": state.lecture_title,
             "participant": ctx.room.name,
         },
     )
