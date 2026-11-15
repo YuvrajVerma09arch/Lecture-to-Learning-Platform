@@ -137,8 +137,14 @@ def create_app() -> FastAPI:
                 return JSONResponse(status_code=404, content={"detail": "Not found"})
             candidate = FRONTEND_DIST / full_path
             if full_path and candidate.is_file():
-                return FileResponse(candidate)
-            return FileResponse(FRONTEND_DIST / "index.html")
+                # Unhashed helpers (theme-init.js, sw.js, …) revalidate on
+                # every use so a stale copy can never outlive a change.
+                return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
+            # The entry document is the one file that must never be cached:
+            # an old copy references bundle names that no longer exist.
+            return FileResponse(
+                FRONTEND_DIST / "index.html", headers={"Cache-Control": "no-store"}
+            )
 
     return app
 
