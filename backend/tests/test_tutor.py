@@ -15,6 +15,7 @@ import time
 import pytest
 
 from agent import tutor
+from app import db as db_mod
 from app.api import livekit as livekit_api
 from app.retrieval import fts
 
@@ -474,3 +475,153 @@ class TestStreamingCleaner:
 
         out = [piece async for piece in agent.transcription_node(source(), tutor.ModelSettings())]
         assert out == ["The answer is 7. "]
+
+
+class TestLectureContext:
+    """What the tutor knows about the lecture before the first question.
+
+    The instructions are orientation, never a source: every one of these
+    tests that reaches the prompt re-checks the grounding pins.
+    """
+
+    def _seed(self, *, topics: int = 3, summary: str = "A short overview."):
+        """Insert a lecture with notes shaped like the real renderer."""
+        lecture_id = "lec_ctx"
+        headings = [f"Topic {i}" for i in range(topics)]
+        lines = ["# Recursion in DSA", "", "## Summary", "", summary, ""]
+        for heading in headings:
+            lines += [f"## {heading}", "", f"Body of {heading}."]
+        document = "\n".join(lines)
+
+        now = time.time()
+        with db_mod.get_conn() as conn:
+            conn.execute(
+                "INSERT INTO lectures (id, title, original_filename, content_hash, "
+                "language_code, status, owner_id, created_at, updated_at) "
+                "VALUES (?, ?, 'lecture.mp3', 'hash-ctx', 'en-IN', 'ready', "
+                "'anonymous', ?, ?)",
+                (lecture_id, "Recursion in DSA", now, now),
+            )
+            conn.execute(
+                "INSERT INTO notes (id, lecture_id, document, summary, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("note_ctx", lecture_id, document, summary, now),
+            )
+        return lecture_id
+
+    def test_it_reads_the_title_summary_and_topics(self):
+        lecture_id = self._seed(topics=3)
+        state = tutor.TutorState(lecture_id=lecture_id)
+        tutor.load_lecture_context(state)
+
+        assert state.lecture_title == "Recursion in DSA"
+        assert state.lecture_summary == "A short overview."
+        assert state.lecture_topics == "Topic 0, Topic 1, Topic 2"
+
+    def test_summary_and_topics_are_structure_not_subject_matter(self):
+        lecture_id = self._seed()
+        state = tutor.TutorState(lecture_id=lecture_id)
+        tutor.load_lecture_context(state)
+
+        assert "Summary" not in state.lecture_topics
+
+    def test_the_topic_list_is_capped(self):
+        lecture_id = self._seed(topics=tutor.MAX_TOPICS + 4)
+        state = tutor.TutorState(lecture_id=lecture_id)
+        tutor.load_lecture_context(state)
+
+        topics = state.lecture_topics.split(", ")
+        assert len(topics) == tutor.MAX_TOPICS
+
+    def test_a_long_summary_is_truncated(self):
+        lecture_id = self._seed(summary="x" * (tutor.MAX_SUMMARY_CHARS + 100))
+        state = tutor.TutorState(lecture_id=lecture_id)
+        tutor.load_lecture_context(state)
+
+        assert len(state.lecture_summary) == tutor.MAX_SUMMARY_CHARS
+
+    def test_an_unknown_lecture_leaves_the_fields_empty(self):
+        state = tutor.TutorState(lecture_id="lec_does_not_exist")
+        tutor.load_lecture_context(state)
+
+        assert state.lecture_title == ""
+        assert state.lecture_summary == ""
+        assert state.lecture_topics == ""
+
+    def test_a_session_without_a_lecture_does_not_touch_the_database(self, monkeypatch):
+        def explode(*args, **kwargs):
+            raise AssertionError("no lookup should happen without a lecture id")
+
+        monkeypatch.setattr(db_mod, "get_conn", explode)
+        state = tutor.TutorState()
+        tutor.load_lecture_context(state)
+        assert state.lecture_title == ""
+
+    def test_an_unreadable_database_never_fails_the_session(self, monkeypatch):
+        def explode(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(db_mod, "get_conn", explode)
+        state = tutor.TutorState(lecture_id="lec_ctx")
+        tutor.load_lecture_context(state)  # must not raise
+        assert state.lecture_title == ""
+
+    def test_the_context_survives_a_new_turn(self):
+        lecture_id = self._seed()
+        state = tutor.TutorState(lecture_id=lecture_id)
+        tutor.load_lecture_context(state)
+        state.reset_turn()
+        assert state.lecture_title == "Recursion in DSA"
+
+
+class TestInstructionsFor:
+    def test_without_context_the_instructions_are_untouched(self):
+        state = tutor.TutorState()
+        assert tutor.instructions_for(state) is tutor.INSTRUCTIONS
+
+    def test_with_context_every_governing_pin_survives(self):
+        state = tutor.TutorState(
+            lecture_id="lec_ctx",
+            lecture_title="Recursion in DSA",
+            lecture_summary="A short overview.",
+            lecture_topics="Topic 0, Topic 1",
+        )
+        text = tutor.instructions_for(state).lower()
+
+        # The base rules are appended to, never edited.
+        for pin in (
+            "only from the lecture",
+            "search_lecture",
+            "not in this lecture",
+            "language and script of the student's latest message",
+            "one to three short sentences",
+            "never narrate",
+            "never reconstruct",
+        ):
+            assert pin in text
+
+    def test_the_orientation_block_says_it_is_not_a_source(self):
+        state = tutor.TutorState(
+            lecture_id="lec_ctx",
+            lecture_title="Recursion in DSA",
+            lecture_summary="A short overview.",
+            lecture_topics="Topic 0",
+        )
+        text = tutor.instructions_for(state)
+
+        assert "Recursion in DSA" in text
+        assert "orientation only" in text
+        assert "still come only from" in text
+
+    def test_the_built_agent_carries_the_orientation(self):
+        state = tutor.TutorState(
+            lecture_id="lec_ctx",
+            lecture_title="Recursion in DSA",
+        )
+        agent = tutor.build_agent(state)
+        assert "Recursion in DSA" in agent.instructions
+        assert "search_lecture" in agent.instructions
+
+    def test_an_empty_title_falls_back_to_the_base_instructions(self):
+        state = tutor.TutorState(lecture_id="lec_ctx")
+        assert tutor.instructions_for(state) is tutor.INSTRUCTIONS
