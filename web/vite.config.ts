@@ -14,6 +14,11 @@ export default defineConfig({
     proxy: {
       "/api": { target: API_TARGET, changeOrigin: true },
     },
+    // Never cacheable: Safari once held a stale copy of this page for
+    // localhost:5173 and rendered a white screen instead of the app.
+    headers: {
+      "Cache-Control": "no-store",
+    },
   },
   build: {
     outDir: "dist",
