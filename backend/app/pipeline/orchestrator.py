@@ -85,6 +85,7 @@ async def run_notes_pipeline(
     with_denoise: bool = False,
     bias_list: list[str] | None = None,
     on_progress: Any = None,
+    owner_id: str = "anonymous",
 ) -> PipelineResult:
     """Ingest a lecture and produce notes.
 
@@ -135,10 +136,16 @@ async def run_notes_pipeline(
             # re-upload would create a second lecture row for the same
             # audio. The language is part of the key because the derived
             # rows are built from a transcript in that language.
+            #
+            # It is also scoped to the owner: two students may upload the
+            # same recording, and neither may inherit the other's lecture
+            # row. The *transcript* cache is still shared -- it is keyed
+            # on the audio and costs credits to produce -- so the second
+            # upload reuses it for free while getting its own lecture row.
             row = conn.execute(
                 "SELECT id FROM lectures WHERE content_hash=? AND language_code=? "
-                "ORDER BY created_at LIMIT 1",
-                (source_hash, language_code),
+                "AND owner_id=? ORDER BY created_at LIMIT 1",
+                (source_hash, language_code, owner_id),
             ).fetchone()
             if row is not None:
                 lecture_id = row["id"]
@@ -147,8 +154,8 @@ async def run_notes_pipeline(
                 conn.execute(
                     """INSERT INTO lectures
                          (id, title, original_filename, content_hash, audio_seconds,
-                          language_code, status, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                          language_code, status, owner_id, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (
                         lecture_id,
                         title,
@@ -157,6 +164,7 @@ async def run_notes_pipeline(
                         media.duration_seconds,
                         language_code,
                         STATUS_UPLOADED,
+                        owner_id,
                         now(),
                         now(),
                     ),
@@ -167,8 +175,8 @@ async def run_notes_pipeline(
             conn.execute(
                 """INSERT INTO lectures
                      (id, title, original_filename, content_hash, audio_seconds,
-                      language_code, status, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                      language_code, status, owner_id, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
                     lecture_id,
                     title,
@@ -177,6 +185,7 @@ async def run_notes_pipeline(
                     media.duration_seconds,
                     language_code,
                     STATUS_UPLOADED,
+                    owner_id,
                     now(),
                     now(),
                 ),

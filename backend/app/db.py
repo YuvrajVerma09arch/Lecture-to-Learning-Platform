@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
 
+-- ``owner_id`` is the Google account ``sub`` that uploaded the
+-- lecture, or ``anonymous`` for the open (sign-in-off) mode. Every
+-- read is scoped by it, so one student never sees another's
+-- lectures. It is added by an additive ALTER after the script runs
+-- (see ``_ensure_schema``), never by a schema-version bump: a bump
+-- would drop the derived tables and throw away finished notes.
 CREATE TABLE IF NOT EXISTS lectures (
     id                TEXT PRIMARY KEY,
     title             TEXT NOT NULL,
@@ -66,6 +72,7 @@ CREATE TABLE IF NOT EXISTS lectures (
     status            TEXT NOT NULL DEFAULT 'uploaded',
     failed_stage      TEXT,
     failure_reason    TEXT,
+    owner_id          TEXT NOT NULL DEFAULT 'anonymous',
     created_at        REAL NOT NULL,
     updated_at        REAL NOT NULL
 );
@@ -350,6 +357,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             )
 
     conn.executescript(SCHEMA)
+
+    # Additive, guarded migration: ``lectures.owner_id`` was added after
+    # the versioned schema existed. Adding a column with a DEFAULT does
+    # not touch existing rows' other data, so this is safe to run on
+    # every open -- and it must happen *after* the script, which would
+    # recreate the table without the column on a fresh database.
+    lecture_cols = {r["name"] for r in conn.execute("PRAGMA table_info(lectures)")}
+    if lecture_cols and "owner_id" not in lecture_cols:
+        log.info("adding lectures.owner_id for per-user isolation")
+        conn.execute(
+            "ALTER TABLE lectures ADD COLUMN owner_id TEXT NOT NULL "
+            "DEFAULT 'anonymous'"
+        )
+
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
     conn.commit()
@@ -361,6 +382,21 @@ def new_id(prefix: str) -> str:
 
 def now() -> float:
     return time.time()
+
+
+def owned_lecture(
+    conn: sqlite3.Connection, lecture_id: str, owner_id: str
+) -> sqlite3.Row | None:
+    """Fetch a lecture only if ``owner_id`` owns it.
+
+    Returns ``None`` for both an unknown id and someone else's lecture,
+    so callers answer 404 either way and never confirm that another
+    student's lecture id exists.
+    """
+    return conn.execute(
+        "SELECT * FROM lectures WHERE id=? AND owner_id=?",
+        (lecture_id, owner_id),
+    ).fetchone()
 
 
 def set_status(
