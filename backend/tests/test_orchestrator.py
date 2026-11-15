@@ -162,6 +162,22 @@ class TestFullPipeline:
             assert len(usage) == 1
             assert usage[0]["kind"] == "batch_stt"
 
+    async def test_the_lecture_row_is_stamped_with_the_owner(
+        self, tmp_path, fake_client, fake_llms
+    ):
+        """The uploader's user id lands on the row, not the default."""
+        audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
+        result = await orchestrator.run_notes_pipeline(
+            audio, title="Owned Lecture", language_code="en-IN",
+            owner_id="user-alice",
+        )
+
+        with db_mod.get_conn() as conn:
+            lecture = conn.execute(
+                "SELECT owner_id FROM lectures WHERE id=?", (result.lecture_id,)
+            ).fetchone()
+            assert lecture["owner_id"] == "user-alice"
+
     async def test_a_cache_hit_skips_transcription(self, tmp_path, fake_client, fake_llms):
         audio = _make_audio(tmp_path / "lecture.mp3", seconds=6.0)
 

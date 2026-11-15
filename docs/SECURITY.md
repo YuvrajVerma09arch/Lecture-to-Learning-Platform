@@ -250,12 +250,14 @@ These are real and are not hidden by the rest of this note.
    MFA beyond whatever the Google account has, and no account recovery of
    our own. The open mode is for the local demo; a deployment must set the
    two variables (and register the redirect URIs).
-2. **Lectures are not scoped per user.** Users and sessions are real —
-   sign-in creates a row, and the session id is what the 401 checks — but
-   the `lectures` table has no owner column, so every signed-in student
-   sees the same lecture list. Acceptable while the class shares one
-   corpus; a multi-tenant deployment needs an owner column and a `WHERE`
-   on every read.
+2. **Open mode shares one corpus.** With sign-in off, every request is the
+   shared `anonymous` user and sees the same lectures — that is the local
+   demo's intent. With Google sign-in on, every lecture, segment, note and
+   flashcard is scoped to its owner in SQL: a foreign lecture id answers
+   404 (identical to an unknown id), and retrieval filters on `owner_id`
+   so one student's segments can never enter another's chat context,
+   search results, or deck view. There is still no per-user quota and no
+   admin role.
 3. **No per-host concurrency cap on outbound requests.** The batching and
    pacing limits cover the notes workload, but there is no global cap on
    concurrent outbound HTTP calls.
