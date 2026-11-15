@@ -22,12 +22,13 @@ import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as db_mod
 from ..config import get_settings
 from ..logging_setup import get_logger
+from .auth import require_user
 
 log = get_logger(__name__)
 
@@ -81,8 +82,18 @@ class TokenRequest(BaseModel):
 
 
 @router.post("/token")
-async def mint_token(request: TokenRequest) -> dict[str, Any]:
+async def mint_token(
+    request: TokenRequest,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     """Mint a room token for the student."""
+    # Ownership is checked first, before anything about the server's
+    # configuration: a student who does not own the lecture must not be
+    # able to open a room grounded in someone else's notes.
+    with db_mod.get_conn() as conn:
+        if db_mod.owned_lecture(conn, request.lecture_id, user["id"]) is None:
+            raise HTTPException(status_code=404, detail="No such lecture")
+
     settings = get_settings()
     if not settings.has_livekit():
         raise HTTPException(
@@ -93,7 +104,7 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
 
     from livekit import api
 
-    language = resolve_language(request)
+    language = resolve_language(request, owner_id=user["id"])
     room = room_name_for(request.lecture_id)
     try:
         at = api.AccessToken(
@@ -135,13 +146,16 @@ async def mint_token(request: TokenRequest) -> dict[str, Any]:
     }
 
 
-def resolve_language(request: TokenRequest) -> str:
+def resolve_language(request: TokenRequest, *, owner_id: str | None = None) -> str:
     """The session language: the request's choice, else the lecture's.
 
     A language outside :data:`SUPPORTED_LANGUAGES` is a 422 rather than a
     silent default -- Gnani closes the streaming socket with 1008 for an
     unknown ``lang_code``, which would fail mid-session with a far worse
     error than a rejected request.
+
+    ``owner_id`` scopes the lecture lookup; when given, another user's
+    lecture reads as absent and the default applies.
     """
     if request.language is not None:
         if request.language not in SUPPORTED_LANGUAGES:
@@ -154,10 +168,13 @@ def resolve_language(request: TokenRequest) -> str:
             )
         return request.language
     with db_mod.get_conn() as conn:
-        row = conn.execute(
-            "SELECT language_code FROM lectures WHERE id=?",
-            (request.lecture_id,),
-        ).fetchone()
+        if owner_id is None:
+            row = conn.execute(
+                "SELECT language_code FROM lectures WHERE id=?",
+                (request.lecture_id,),
+            ).fetchone()
+        else:
+            row = db_mod.owned_lecture(conn, request.lecture_id, owner_id)
     if row is not None and row["language_code"] in SUPPORTED_LANGUAGES:
         return str(row["language_code"])
     return "en-IN"

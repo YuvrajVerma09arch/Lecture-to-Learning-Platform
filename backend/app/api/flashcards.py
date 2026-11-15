@@ -11,11 +11,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as db_mod
 from ..logging_setup import get_logger
+from .auth import require_user
 
 log = get_logger(__name__)
 
@@ -30,7 +31,11 @@ SECOND_INTERVAL_DAYS = 6.0
 
 
 @router.post("/lecture/{lecture_id}")
-async def generate_for_lecture(lecture_id: str, count: int = 20) -> dict[str, Any]:
+async def generate_for_lecture(
+    lecture_id: str,
+    count: int = 20,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     """Generate flashcards for a lecture and store them.
 
     Generation is idempotent: a card whose question already exists is not
@@ -39,10 +44,7 @@ async def generate_for_lecture(lecture_id: str, count: int = 20) -> dict[str, An
     from ..pipeline import flashcards as cards_mod
 
     with db_mod.get_conn() as conn:
-        lecture = conn.execute(
-            "SELECT id FROM lectures WHERE id=?", (lecture_id,)
-        ).fetchone()
-        if lecture is None:
+        if db_mod.owned_lecture(conn, lecture_id, user["id"]) is None:
             raise HTTPException(status_code=404, detail="No such lecture")
 
         try:
@@ -101,14 +103,26 @@ def schedule(repetitions: int, ease: float, quality: int, interval_days: float) 
 
 
 @router.get("")
-async def list_cards(lecture_id: str | None = None, due_only: bool = False) -> dict[str, Any]:
+async def list_cards(
+    lecture_id: str | None = None,
+    due_only: bool = False,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     with db_mod.get_conn() as conn:
-        sql = "SELECT * FROM flashcards"
-        params: list[Any] = []
+        if lecture_id and db_mod.owned_lecture(conn, lecture_id, user["id"]) is None:
+            raise HTTPException(status_code=404, detail="No such lecture")
+
+        # Scoped through the lecture's owner: without it, the deck view
+        # with no lecture id would show every student's cards.
+        sql = (
+            "SELECT f.* FROM flashcards f "
+            "JOIN lectures l ON l.id = f.lecture_id WHERE l.owner_id = ?"
+        )
+        params: list[Any] = [user["id"]]
         if lecture_id:
-            sql += " WHERE lecture_id=?"
+            sql += " AND f.lecture_id = ?"
             params.append(lecture_id)
-        sql += " ORDER BY id"
+        sql += " ORDER BY f.id"
         cards = conn.execute(sql, params).fetchall()
 
         reviews = {
@@ -140,11 +154,18 @@ async def list_cards(lecture_id: str | None = None, due_only: bool = False) -> d
 
 
 @router.post("/{card_id}/review")
-async def review_card(card_id: str, request: ReviewRequest) -> dict[str, Any]:
+async def review_card(
+    card_id: str,
+    request: ReviewRequest,
+    user: dict[str, Any] = Depends(require_user),  # noqa: B008 - FastAPI dependency
+) -> dict[str, Any]:
     """Record a review and schedule the next one."""
     with db_mod.get_conn() as conn:
         card = conn.execute(
-            "SELECT * FROM flashcards WHERE id=?", (card_id,)
+            """SELECT f.* FROM flashcards f
+               JOIN lectures l ON l.id = f.lecture_id
+               WHERE f.id = ? AND l.owner_id = ?""",
+            (card_id, user["id"]),
         ).fetchone()
         if card is None:
             raise HTTPException(status_code=404, detail="No such flashcard")
