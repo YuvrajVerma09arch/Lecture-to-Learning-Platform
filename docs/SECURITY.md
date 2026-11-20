@@ -151,9 +151,12 @@ Retries are bounded everywhere: the batch client rebuilds its multipart body
 per attempt (a consumed body would have sent an empty file), and it only
 retries on retryable conditions.
 
-**Two rate limits are not implemented, and are listed as gaps below:** a
-per-IP upload rate limit, and a per-host concurrency cap on outbound
-requests.
+**Rate limits:** sign-in, upload and other writes are each limited per
+client address by the HTTP middleware (30/10/120 per minute by default).
+The counters are in-process: a deployment running more than one API process
+multiplies the effective limit by the number of processes and needs a shared
+store. A per-host concurrency cap on outbound requests is still missing
+(gap 3).
 
 ## Data retention
 
@@ -182,11 +185,12 @@ The transcript is sent to the LLM providers because the model cannot write
 notes about a lecture it has not read. It is not sent to any other service,
 and it is never sent to a service that has not been named above.
 
-The application is a single-user demo deployed on one machine. There is no
-authentication on the API: anyone who can reach the port can read the
-lectures, ask questions and upload a recording. That is a deliberate scope
-decision for a demo, not an oversight, and it is the first thing to change
-before this is exposed to a network.
+The application supports Google sign-in and per-user isolation. With
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set, data routes require a
+session and every lecture, note and card is scoped to its owner. With them
+unset, the API runs open and all requests share the `anonymous` user — that
+is the local demo mode, and must not be exposed to a network. See the known
+gaps below for what is still missing.
 
 ## Dependencies and licences
 
@@ -239,6 +243,21 @@ because it is a hard dependency of `livekit-agents`, not because it is used.
 If the project is ever distributed rather than run, that licence term needs
 reviewing.
 
+### Dependency audit (20 Nov 2026)
+
+- `pip-audit`: no known vulnerabilities in installed packages (the local
+  editable project is skipped because it is not published).
+- `npm audit --omit=dev`: 4 low findings — `katex`, `remark-math`,
+  `micromark-extension-math` and `rehype-katex`. `renderMath` only accepts a
+  strict allowlist of equation characters and KaTeX runs with `trust: false`,
+  so the reported prototype-pollution path is not reachable here.
+- The full `npm audit` also reports 1 high and 1 moderate in Vite/esbuild,
+  **development tooling only**. Production serves a prebuilt `dist/` from
+  FastAPI, so neither ships. The high fix is a Vite 5→8 major upgrade;
+  `npm audit fix --force` is deliberately not used. Deferred after review on
+  20 Nov 2026; re-evaluate by 20 Dec 2026 or before exposing the dev server.
+- `npm audit signatures`: all 217 packages have verified registry signatures.
+
 ## Known gaps
 
 These are real and are not hidden by the rest of this note.
@@ -271,3 +290,11 @@ These are real and are not hidden by the rest of this note.
    Internet Archive, CC BY-NC-ND 4.0). A real deployment would handle
    recordings of students and teachers, which is a different sensitivity
    class.
+7. **Rate limits are per process.** The middleware's sliding windows live
+   in memory, so several API workers do not share them. A shared store is
+   needed before horizontal scaling.
+8. **No data-subject export or deletion path.** A sign-in stores the
+   student's Google email in `users`, and transcripts, notes and generated
+   notes are kept alongside it. There is no end-to-end "export my data" or
+   "delete my account" flow covering the database, the caches and the
+   Markdown files. Add one before holding real student data.

@@ -12,7 +12,7 @@ used to decide whether a rollout is safe, and what to do when it is not.
 | Build | `cd web && npm run build` — `tsc --noEmit` and Vite build passed |
 | End-to-end | `.venv/bin/python scripts/e2e_smoke.py` — 32 passed, 0 failed |
 | Python dependencies | `pip-audit` — no known vulnerabilities (local editable project skipped) |
-| JS dependencies | `npm audit --omit=dev --audit-level=high` — no high/critical (4 low) |
+| JS dependencies | `npm audit --omit=dev --audit-level=high` — no high/critical (4 low). Full audit also flags Vite/esbuild (dev-only); triage and deferral in `docs/SECURITY.md` |
 | Isolation | `backend/tests/test_ownership.py` — 18 passed |
 | Initial payload | 188.68 kB gzip JS (< 200 kB), 14.99 kB gzip CSS (< 50 kB) |
 | Client metrics (synthetic) | LCP 232 ms, FCP 204 ms, CLS 0, TTFB 55 ms |
