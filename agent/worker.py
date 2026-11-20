@@ -87,6 +87,19 @@ server = AgentServer(
 MARKER_TOPIC = "lecture-tutor-markers"
 
 
+def prepare_state(room_name: str, room_metadata: str | dict[str, Any] | None) -> TutorState:
+    """Build the per-session state from the room, and ground it in the lecture.
+
+    Kept separate from the entrypoint so the one call that makes the
+    orientation possible is a plain function an offline test can exercise.
+    """
+    state = TutorState()
+    state.lecture_id = lecture_id_from_room(room_name)
+    state.language = language_for_room(room_name, room_metadata)
+    load_lecture_context(state)
+    return state
+
+
 @server.rtc_session(agent_name=AGENT_NAME)
 async def tutor_entrypoint(ctx: JobContext) -> None:
     """Run one tutoring session.
@@ -96,12 +109,9 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
     """
     configure_logging("INFO")
 
-    state = TutorState()
-    state.lecture_id = lecture_id_from_room(ctx.room.name)
-    state.language = language_for_room(ctx.room.name, ctx.room.metadata)
     # What the lecture is about, before the student says anything: the
     # agent is built below, and its instructions read these fields.
-    load_lecture_context(state)
+    state = prepare_state(ctx.room.name, ctx.room.metadata)
 
     log.info(
         "tutor session starting",
