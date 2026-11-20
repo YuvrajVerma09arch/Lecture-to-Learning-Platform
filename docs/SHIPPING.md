@@ -16,7 +16,7 @@ used to decide whether a rollout is safe, and what to do when it is not.
 | Isolation | `backend/tests/test_ownership.py` — 18 passed |
 | Initial payload | 188.68 kB gzip JS (< 200 kB), 14.99 kB gzip CSS (< 50 kB) |
 | Client metrics (synthetic) | LCP 232 ms, FCP 204 ms, CLS 0, TTFB 55 ms |
-| Security | CSP/frame/object/base-uri headers, rate limits, specific CORS origins, auth gates — all asserted by the E2E smoke |
+| Security | CSP/frame/object/base-uri headers, SQLite-shared rate limits, specific CORS origins, auth gates — all asserted by the E2E smoke |
 | Code review | Tutor grounding reviewed; prompt-injection boundary and worker wiring fixed in `ed71eb5` / `df845f6` |
 
 ## Accepted deviations

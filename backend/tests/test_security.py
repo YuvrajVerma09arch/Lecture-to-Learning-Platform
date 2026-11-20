@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config as config_mod
+from app import db as db_mod
 from app import middleware as mw
 from app.middleware import CONTENT_SECURITY_POLICY, reset_rate_limiter
 
@@ -162,8 +163,25 @@ class TestRateLimits:
         assert client.get("/api/auth/me").status_code == 429
 
         # Age the recorded hit past the window without waiting a minute.
-        for hits in mw._LIMITER._hits.values():
-            hits.clear()
-            hits.append(time.monotonic() - mw._WINDOW_SECONDS - 1)
+        mw._LIMITER.age_all_hits(mw._WINDOW_SECONDS + 1)
 
         assert client.get("/api/auth/me").status_code == 200
+
+    def test_hits_from_another_connection_share_the_quota(self, client, limits):
+        """A second API process writes to the same file, not its own memory."""
+        limits(RATE_LIMIT_AUTH_PER_MINUTE=2)
+
+        assert client.get("/api/auth/me").status_code == 200
+        # Simulate a hit recorded by another worker against the same key.
+        conn = db_mod.connect_raw()
+        try:
+            bucket = conn.execute("SELECT bucket FROM rate_limit_hits LIMIT 1").fetchone()[0]
+            conn.execute(
+                "INSERT INTO rate_limit_hits(bucket, hit_at) VALUES (?, ?)",
+                (bucket, time.monotonic()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        assert client.get("/api/auth/me").status_code == 429

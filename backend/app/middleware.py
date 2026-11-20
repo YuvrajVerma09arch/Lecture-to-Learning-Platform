@@ -26,12 +26,12 @@ from __future__ import annotations
 import json
 import math
 import time
-from collections import deque
 from urllib.parse import urlsplit
 
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from . import db as db_mod
 from .config import Settings, get_settings
 from .logging_setup import get_logger
 
@@ -132,39 +132,60 @@ def _bucket(path: str, method: str, settings: Settings) -> tuple[str, int] | Non
 
 
 class _RateLimiter:
-    """Sliding-window counters keyed by client address and bucket."""
+    """Sliding-window counters shared by every process on this database.
 
-    def __init__(self) -> None:
-        self._hits: dict[str, deque[float]] = {}
+    The counters live in SQLite rather than in this module's memory: two
+    API workers must see the same hits, or each one gets its own quota.
+    ``BEGIN IMMEDIATE`` serialises prune/count/insert so two workers cannot
+    both decide they are under the limit. Rejected requests are never
+    stored, so they do not extend their own penalty.
+    """
 
     def reset(self) -> None:
-        """Drop every counter (tests use this)."""
-        self._hits.clear()
+        """Drop every counter (tests use this). Uses the migrating helper
+        because it may run before ``init_db`` has ever opened the file."""
+        with db_mod.get_conn() as conn:
+            conn.execute("DELETE FROM rate_limit_hits")
+
+    def age_all_hits(self, seconds: float) -> None:
+        """Test hook: age stored hits without sleeping for a whole window."""
+        with db_mod.get_conn() as conn:
+            conn.execute("UPDATE rate_limit_hits SET hit_at = hit_at - ?", (seconds,))
 
     def retry_after(self, key: str, limit: int) -> float | None:
-        """Seconds the caller must wait, or ``None`` to let it through.
-
-        Only requests that are allowed count towards the window, so a
-        rejected request never extends its own penalty.
-        """
+        """Seconds the caller must wait, or ``None`` to let it through."""
         if limit <= 0:
             return None
-        now = time.monotonic()
-        hits = self._hits.setdefault(key, deque())
-        cutoff = now - _WINDOW_SECONDS
-        while hits and hits[0] <= cutoff:
-            hits.popleft()
-        if len(hits) >= limit:
-            return max(1.0, hits[0] + _WINDOW_SECONDS - now)
-        hits.append(now)
-        if len(self._hits) > _MAX_BUCKETS:
-            self._sweep(cutoff)
-        return None
-
-    def _sweep(self, cutoff: float) -> None:
-        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
-        for key in stale:
-            del self._hits[key]
+        conn = db_mod.connect_raw()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            now = time.monotonic()
+            cutoff = now - _WINDOW_SECONDS
+            conn.execute(
+                "DELETE FROM rate_limit_hits WHERE bucket=? AND hit_at<=?", (key, cutoff)
+            )
+            count = conn.execute(
+                "SELECT COUNT(*) FROM rate_limit_hits WHERE bucket=?", (key,)
+            ).fetchone()[0]
+            if count >= limit:
+                oldest = conn.execute(
+                    "SELECT MIN(hit_at) FROM rate_limit_hits WHERE bucket=?", (key,)
+                ).fetchone()[0]
+                retry = max(1.0, oldest + _WINDOW_SECONDS - now)
+                conn.commit()  # keep the prune; do not append a rejected hit
+                return retry
+            conn.execute(
+                "INSERT INTO rate_limit_hits(bucket, hit_at) VALUES (?,?)", (key, now)
+            )
+            # Bound the table: stale hits from abandoned addresses are not
+            # pruned by the per-key query above.
+            total = conn.execute("SELECT COUNT(*) FROM rate_limit_hits").fetchone()[0]
+            if total > _MAX_BUCKETS:
+                conn.execute("DELETE FROM rate_limit_hits WHERE hit_at<=?", (cutoff,))
+            conn.commit()
+            return None
+        finally:
+            conn.close()
 
 
 _LIMITER = _RateLimiter()

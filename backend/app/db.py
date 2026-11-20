@@ -173,6 +173,17 @@ CREATE TABLE IF NOT EXISTS credit_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_credit_day ON credit_usage(day);
 
+-- HTTP rate-limit hits. These live in the same database as the rest of the
+-- app so every API process shares one set of counters. Disposable: neither
+-- a restart nor a schema rebuild preserves them.
+CREATE TABLE IF NOT EXISTS rate_limit_hits (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    bucket  TEXT NOT NULL,
+    hit_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_bucket_time ON rate_limit_hits(bucket, hit_at);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_time ON rate_limit_hits(hit_at);
+
 -- Flashcards (Phase 3) and their spaced-repetition state.
 CREATE TABLE IF NOT EXISTS flashcards (
     id           TEXT PRIMARY KEY,
@@ -249,6 +260,17 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
+
+
+def connect_raw() -> sqlite3.Connection:
+    """A short-lived connection with no schema work, for hot paths.
+
+    The caller owns the connection and must close it. ``get_conn`` runs the
+    full migration script on every call, which is far too expensive for a
+    per-request counter; the schema must already have been created by
+    ``init_db`` (or by a test that calls ``get_conn`` first).
+    """
+    return _connect(get_settings().db_path)
 
 
 @contextmanager

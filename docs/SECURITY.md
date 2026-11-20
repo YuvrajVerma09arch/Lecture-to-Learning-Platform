@@ -153,10 +153,11 @@ retries on retryable conditions.
 
 **Rate limits:** sign-in, upload and other writes are each limited per
 client address by the HTTP middleware (30/10/120 per minute by default).
-The counters are in-process: a deployment running more than one API process
-multiplies the effective limit by the number of processes and needs a shared
-store. A per-host concurrency cap on outbound requests is still missing
-(gap 3).
+The sliding-window hits live in `rate_limit_hits` in the app database, so
+every API process on that database shares one quota; a single
+`BEGIN IMMEDIATE` transaction makes the prune/count/insert atomic. The
+table holds about a minute of hits and is disposable. A per-host
+concurrency cap on outbound requests is still missing (gap 3).
 
 ## Data retention
 
@@ -293,10 +294,7 @@ These are real and are not hidden by the rest of this note.
    Internet Archive, CC BY-NC-ND 4.0). A real deployment would handle
    recordings of students and teachers, which is a different sensitivity
    class.
-7. **Rate limits are per process.** The middleware's sliding windows live
-   in memory, so several API workers do not share them. A shared store is
-   needed before horizontal scaling.
-8. **No data-subject export or deletion path.** A sign-in stores the
+7. **No data-subject export or deletion path.** A sign-in stores the
    student's Google email in `users`, and transcripts, notes and generated
    notes are kept alongside it. There is no end-to-end "export my data" or
    "delete my account" flow covering the database, the caches and the
