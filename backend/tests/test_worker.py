@@ -51,14 +51,18 @@ class TestSessionState:
             )
 
         state = worker.prepare_state(
-            "lecture-lec_worker-deadbeef", '{"language": "te-IN"}'
+            "lecture-lec_worker-deadbeef",
+            '{"language": "te-IN", "user_id": "usr_worker"}',
         )
         assert state.lecture_id == "lec_worker"
         assert state.language == "te-IN"
+        assert state.user_id == "usr_worker"
         assert state.lecture_title == "Worker Lecture"
 
     async def test_the_entrypoint_builds_the_agent_from_the_prepared_state(self, monkeypatch):
-        state = tutor.TutorState(lecture_id="lec_worker", lecture_title="Worker Lecture")
+        state = tutor.TutorState(
+            lecture_id="lec_worker", lecture_title="Worker Lecture", user_id="usr_worker"
+        )
         prepared = []
 
         def prepare(room_name, metadata):

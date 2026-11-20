@@ -314,6 +314,13 @@ class TestLiveKitToken:
 
         # Assert on the decoded claims, never print the token itself.
         claims = _claims(token)
+        # Identity is derived from the signed session, not the request body.
+        assert claims["sub"] == "anonymous"
+        assert claims["name"] == "Student"
+        assert json.loads(claims["metadata"]) == {
+            "user_id": "anonymous",
+            "lecture_id": seeded_lecture,
+        }
         video = claims["video"]
         assert video["roomJoin"] is True
         assert video["room"] == room
@@ -349,8 +356,8 @@ class TestLiveKitToken:
             "/api/livekit/token",
             json={"lecture_id": seeded_lecture, "language": "hi-IN"},
         ).json()
-        metadata = _claims(payload["token"])["roomConfig"]["metadata"]
-        assert json.loads(metadata) == {"language": "hi-IN"}
+        metadata = json.loads(_claims(payload["token"])["roomConfig"]["metadata"])
+        assert metadata == {"language": "hi-IN", "user_id": "anonymous"}
 
     def test_without_a_language_it_falls_back_to_the_lectures(
         self, client, seeded_lecture
@@ -358,8 +365,24 @@ class TestLiveKitToken:
         payload = client.post(
             "/api/livekit/token", json={"lecture_id": seeded_lecture}
         ).json()
-        metadata = _claims(payload["token"])["roomConfig"]["metadata"]
-        assert json.loads(metadata) == {"language": "te-IN"}
+        metadata = json.loads(_claims(payload["token"])["roomConfig"]["metadata"])
+        assert metadata == {"language": "te-IN", "user_id": "anonymous"}
+
+    def test_a_client_cannot_choose_its_participant_identity(self, client, seeded_lecture):
+        # The old request field is now ignored: a hostile value must not
+        # become the JWT identity, name or metadata.
+        payload = client.post(
+            "/api/livekit/token",
+            json={
+                "lecture_id": seeded_lecture,
+                "participant_name": "usr_someone_else",
+                "name": "Principal",
+            },
+        ).json()
+        claims = _claims(payload["token"])
+        assert claims["sub"] == "anonymous"
+        assert claims["name"] == "Student"
+        assert json.loads(claims["metadata"])["user_id"] == "anonymous"
 
     def test_it_rejects_a_language_the_stt_could_not_use(self, client, seeded_lecture):
         response = client.post(

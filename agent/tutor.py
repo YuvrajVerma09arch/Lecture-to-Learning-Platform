@@ -114,31 +114,48 @@ def voice_for_language(language: str | None) -> str:
     return TTS_VOICES.get(language, FALLBACK_VOICE)
 
 
+def _room_metadata(metadata: str | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Parse ``rtc.Room.metadata``, which is a JSON string, not a dict.
+
+    A malformed or missing value must not crash the worker at session start.
+    """
+    if isinstance(metadata, str):
+        if not metadata:
+            return None
+        try:
+            parsed = json.loads(metadata)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return metadata
+
+
 def language_for_room(room_name: str, metadata: str | dict[str, Any] | None) -> str:
     """The language the student is speaking.
 
     The room metadata wins, because that is where the browser puts it; the
     language of the lecture is the next best guess.
-
-    ``rtc.Room.metadata`` is a JSON **string** (or empty), not a dict --
-    parsing happens here so a set room cannot crash the worker at session
-    start.
     """
-    if isinstance(metadata, str):
-        if not metadata:
-            metadata = None
-        else:
-            try:
-                parsed = json.loads(metadata)
-            except ValueError:
-                parsed = None
-            metadata = parsed if isinstance(parsed, dict) else None
-    if metadata:
+    parsed = _room_metadata(metadata)
+    if parsed:
         for key in ("language", "language_code", "stt_language"):
-            value = metadata.get(key)
+            value = parsed.get(key)
             if value:
                 return str(value)
     return DEFAULT_LANGUAGE
+
+
+def user_id_from_room(metadata: str | dict[str, Any] | None) -> str | None:
+    """The signed-in student the token was minted for, if it was recorded.
+
+    The API puts this in the room metadata because that is the only
+    orientation data guaranteed to exist when the worker starts, before the
+    student has joined. It is used for attribution, never for authorisation
+    inside the room.
+    """
+    parsed = _room_metadata(metadata)
+    value = parsed.get("user_id") if parsed else None
+    return str(value) if value else None
 
 
 INSTRUCTIONS = """You are a tutor for Indian college students, helping them revise a lecture they have just watched.
@@ -229,6 +246,9 @@ class TutorState:
     lecture_title: str = ""
     lecture_summary: str = ""
     lecture_topics: str = ""
+    #: The student the token was minted for, from room metadata. Used for
+    #: attribution in logs, never as an authorisation decision.
+    user_id: str | None = None
 
     def reset_turn(self) -> None:
         self.timings = TurnTimings()

@@ -72,7 +72,6 @@ class TokenRequest(BaseModel):
     #: The lecture the student is asking about. The room is named after
     #: it, so the agent knows which lecture to ground the answer in.
     lecture_id: str = Field(min_length=1, max_length=64)
-    participant_name: str = Field(default="Student", max_length=64)
     #: The language the student will speak this session, e.g. ``hi-IN``.
     #: Optional: when omitted the lecture's own language is used. Must be
     #: one of the single codes Gnani accepts -- anything else would be a
@@ -106,12 +105,17 @@ async def mint_token(
 
     language = resolve_language(request, owner_id=user["id"])
     room = room_name_for(request.lecture_id)
+    # Identity comes from the signed session, never from the request body:
+    # a client must not be able to join as another student. The opaque local
+    # id is stable, non-empty (to_jwt requires it) and is not an email.
+    identity = user["id"] or "anonymous"
     try:
         at = api.AccessToken(
             settings.livekit_api_key, settings.livekit_api_secret
         )
-        at = at.with_identity(request.participant_name or "Student")
-        at = at.with_name(request.participant_name or "Student")
+        at = at.with_identity(identity)
+        at = at.with_name("Student")
+        at = at.with_metadata(json.dumps({"user_id": identity, "lecture_id": request.lecture_id}))
         at = at.with_grants(
             api.VideoGrants(
                 room_join=True,
@@ -127,7 +131,7 @@ async def mint_token(
         at = at.with_room_config(
             api.RoomConfiguration(
                 agents=[api.RoomAgentDispatch(agent_name=AGENT_NAME)],
-                metadata=json.dumps({"language": language}),
+                metadata=json.dumps({"language": language, "user_id": identity}),
             )
         )
         at = at.with_ttl(timedelta(seconds=TOKEN_TTL_SECONDS))

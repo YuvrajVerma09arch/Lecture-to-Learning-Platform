@@ -141,7 +141,7 @@ export function useLiveKitRoom(
     clear();
 
     try {
-      const token = await api.livekitToken(lectureId, "Student", language);
+      const token = await api.livekitToken(lectureId, language);
       const room = new Room({ adaptiveStream: true, dynacast: true });
       roomRef.current = room;
 

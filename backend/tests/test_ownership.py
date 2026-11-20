@@ -15,6 +15,7 @@ These tests pin the boundary from the outside, through the HTTP API:
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -30,6 +31,7 @@ from app.pipeline import flashcards as cards_mod
 from app.pipeline.flashcards import Flashcard
 from app.retrieval import embeddings
 
+from .test_api import _claims as _decode_claims
 from .test_api import _make_audio_bytes
 from .test_auth import (
     CLIENT_ID,
@@ -478,6 +480,10 @@ class TestLiveKitOwnership:
 
         assert payload["room"].startswith(f"lecture-{alice_lec}-")
         assert payload["token"].count(".") == 2
+        claims = _decode_claims(payload["token"])
+        assert claims["sub"] == alice.id
+        assert json.loads(claims["metadata"])["user_id"] == alice.id
+        assert json.loads(claims["roomConfig"]["metadata"])["user_id"] == alice.id
 
     def test_a_foreign_lecture_is_404_before_anything_else(
         self, students: Any

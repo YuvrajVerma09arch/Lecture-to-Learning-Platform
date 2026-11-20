@@ -230,11 +230,7 @@ async def mint_token(
     """
     import aiohttp
 
-    payload = {
-        "lecture_id": lecture_id,
-        "participant_name": "Benchmark",
-        "language": language,
-    }
+    payload = {"lecture_id": lecture_id, "language": language}
     timeout = aiohttp.ClientTimeout(connect=10, total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(

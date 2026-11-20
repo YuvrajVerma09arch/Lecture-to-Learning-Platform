@@ -53,6 +53,7 @@ from .tutor import (  # noqa: E402
     language_for_room,
     lecture_id_from_room,
     load_lecture_context,
+    user_id_from_room,
 )
 
 log = get_logger(__name__)
@@ -96,6 +97,7 @@ def prepare_state(room_name: str, room_metadata: str | dict[str, Any] | None) ->
     state = TutorState()
     state.lecture_id = lecture_id_from_room(room_name)
     state.language = language_for_room(room_name, room_metadata)
+    state.user_id = user_id_from_room(room_metadata)
     load_lecture_context(state)
     return state
 
@@ -120,7 +122,7 @@ async def tutor_entrypoint(ctx: JobContext) -> None:
             "lecture_id": state.lecture_id,
             "language": state.language,
             "lecture_title": state.lecture_title,
-            "participant": ctx.room.name,
+            "user_id": state.user_id,
         },
     )
 

@@ -124,6 +124,24 @@ class TestLanguageSelection:
     def test_non_object_json_falls_back(self):
         assert tutor.language_for_room("lecture-1", '"te-IN"') == tutor.DEFAULT_LANGUAGE
 
+    def test_extra_keys_do_not_break_language_selection(self):
+        metadata = '{"language": "hi-IN", "user_id": "usr_123"}'
+        assert tutor.language_for_room("lecture-1", metadata) == "hi-IN"
+
+
+class TestParticipantIdentity:
+    def test_the_student_id_comes_from_room_metadata(self):
+        assert tutor.user_id_from_room('{"user_id": "usr_abc"}') == "usr_abc"
+
+    def test_a_dict_works_too(self):
+        assert tutor.user_id_from_room({"user_id": "usr_abc"}) == "usr_abc"
+
+    def test_missing_or_broken_metadata_has_no_identity(self):
+        assert tutor.user_id_from_room(None) is None
+        assert tutor.user_id_from_room("") is None
+        assert tutor.user_id_from_room("not json") is None
+        assert tutor.user_id_from_room({"language": "hi-IN"}) is None
+
 
 class TestInstructions:
     def test_the_instructions_require_the_lecture_to_be_searched(self):

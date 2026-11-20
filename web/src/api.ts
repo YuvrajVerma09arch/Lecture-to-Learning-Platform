@@ -112,12 +112,11 @@ export const api = {
     return request<ChatSearchResult>(`/api/chat/search?${params.toString()}`);
   },
 
-  livekitToken: (lectureId: string, participantName: string, language?: string) =>
+  livekitToken: (lectureId: string, language?: string) =>
     request<LivekitToken>("/api/livekit/token", {
       method: "POST",
       body: JSON.stringify({
         lecture_id: lectureId,
-        participant_name: participantName,
         ...(language ? { language } : {}),
       }),
     }),

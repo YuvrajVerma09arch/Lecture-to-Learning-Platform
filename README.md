@@ -174,7 +174,7 @@ Interactive API documentation is at `http://127.0.0.1:8000/docs`.
 | `GET` | `/api/flashcards` | The flashcards, optionally `?due_only=true` |
 | `POST` | `/api/flashcards/lecture/{id}` | Generate flashcards from a lecture's notes |
 | `POST` | `/api/flashcards/{id}/review` | Record a review and schedule the next one. Body: `{"quality": 0-5}` |
-| `POST` | `/api/livekit/token` | Mint a room token for a lecture. Body: `{"lecture_id": "...", "participant_name": "...", "language": "hi-IN"}` (`language` optional, defaults to the lecture's language; one of the ten supported codes, else 422) |
+| `POST` | `/api/livekit/token` | Mint a room token for a lecture. Body: `{"lecture_id": "...", "language": "hi-IN"}` (`language` optional, defaults to the lecture's language; one of the ten supported codes, else 422). The participant identity comes from the signed-in session, not the request |
 
 ### The front end
 
