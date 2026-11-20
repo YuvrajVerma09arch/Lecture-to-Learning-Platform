@@ -77,6 +77,8 @@ def build_env(tmp: Path, run: str, google_configured: bool) -> dict[str, str]:
     env["LIVEKIT_API_SECRET"] = ""
     env["GOOGLE_CLIENT_ID"] = "dummy.apps.googleusercontent.com" if google_configured else ""
     env["GOOGLE_CLIENT_SECRET"] = "dummy-oauth-secret" if google_configured else ""
+    # Open mode is an explicit local-demo opt-in, never inherited by a run.
+    env["OPEN_MODE"] = "false" if google_configured else "true"
     return env
 
 

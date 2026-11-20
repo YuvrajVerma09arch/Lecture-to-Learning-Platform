@@ -202,10 +202,11 @@ and it is never sent to a service that has not been named above.
 
 The application supports Google sign-in and per-user isolation. With
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` set, data routes require a
-session and every lecture, note and card is scoped to its owner. With them
-unset, the API runs open and all requests share the `anonymous` user — that
-is the local demo mode, and must not be exposed to a network. See the known
-gaps below for what is still missing.
+session and every lecture, note and card is scoped to its owner. Without
+credentials the API **fails closed**: data routes answer 401. The local demo
+must explicitly opt into `OPEN_MODE=true`, in which case all requests share
+the `anonymous` user; that flag must never be set in a deployment. Setting
+credentials always wins over the flag.
 
 ## Dependencies and licences
 

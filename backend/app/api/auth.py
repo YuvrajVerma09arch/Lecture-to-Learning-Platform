@@ -13,12 +13,10 @@ that takes effect on the next request instead of whenever a token would
 have expired.
 
 If ``GOOGLE_CLIENT_ID`` / ``GOOGLE_CLIENT_SECRET`` are absent the app
-runs *open*: ``require_user`` lets every request through as an
-anonymous local user. That keeps a fresh clone runnable without
-credentials, and it is reported by ``/api/auth/config`` so the frontend
-knows whether to show a sign-in screen. A deployment that wants the API
-protected must configure the credentials; ``create_app`` logs a warning
-when it does not.
+**fails closed**: data routes answer 401. The local demo can opt into an
+open, anonymous mode with ``OPEN_MODE=true``, which is reported by
+``/api/auth/config`` so the frontend knows whether to show a sign-in
+screen. Configuring Google credentials always wins over that flag.
 """
 
 from __future__ import annotations
@@ -114,9 +112,8 @@ def _safe_next(value: str | None) -> str:
 def current_user(request: Request) -> dict[str, Any] | None:
     """The signed-in user, or ``None``.
 
-    ``None`` means "not authenticated" *and*, while the app runs open,
-    "authentication is not in use". ``require_user`` is what distinguishes
-    the two.
+    ``None`` means "not authenticated". An explicitly open demo is the only
+    case where that is acceptable, and ``require_user`` decides it.
     """
     settings = get_settings()
     if not settings.has_google_oauth():
@@ -148,11 +145,12 @@ def current_user(request: Request) -> dict[str, Any] | None:
 async def require_user(request: Request) -> dict[str, Any]:
     """Router-level guard: 401 unless the request carries a live session.
 
-    While the app runs open (no Google credentials configured) it returns
-    the anonymous local user instead, so an unconfigured clone behaves
-    exactly as it did before authentication existed.
+    The only exception is an explicitly enabled local demo (``OPEN_MODE``
+    with no Google credentials). An unconfigured deployment fails closed
+    instead of silently exposing the data routes.
     """
-    if not get_settings().has_google_oauth():
+    settings = get_settings()
+    if not settings.auth_required():
         return dict(ANONYMOUS_USER)
     user = current_user(request)
     if user is None:
@@ -403,6 +401,8 @@ async def auth_config(request: Request) -> dict[str, Any]:
     settings = get_settings()
     return {
         "google_oauth": settings.has_google_oauth(),
+        "open_mode": settings.open_mode and not settings.has_google_oauth(),
+        "auth_required": settings.auth_required(),
         "authenticated": current_user(request) is not None,
     }
 
@@ -410,9 +410,12 @@ async def auth_config(request: Request) -> dict[str, Any]:
 @router.get("/me")
 async def auth_me(request: Request) -> dict[str, Any]:
     """The current user, or null. Never 401s: it is the boot probe."""
+    settings = get_settings()
     return {
         "user": current_user(request),
-        "google_oauth": get_settings().has_google_oauth(),
+        "google_oauth": settings.has_google_oauth(),
+        "open_mode": settings.open_mode and not settings.has_google_oauth(),
+        "auth_required": settings.auth_required(),
     }
 
 

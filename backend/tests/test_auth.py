@@ -211,11 +211,15 @@ class TestOpenMode:
         assert open_client.get("/api/auth/me").json() == {
             "user": None,
             "google_oauth": False,
+            "open_mode": True,
+            "auth_required": False,
         }
 
     def test_config_reports_sign_in_is_off(self, open_client):
         assert open_client.get("/api/auth/config").json() == {
             "google_oauth": False,
+            "open_mode": True,
+            "auth_required": False,
             "authenticated": False,
         }
 
@@ -247,11 +251,15 @@ class TestSigninRequired:
         assert client.get("/api/auth/me").json() == {
             "user": None,
             "google_oauth": True,
+            "open_mode": False,
+            "auth_required": True,
         }
 
     def test_config_reports_sign_in_is_on_and_unauthenticated(self, client):
         assert client.get("/api/auth/config").json() == {
             "google_oauth": True,
+            "open_mode": False,
+            "auth_required": True,
             "authenticated": False,
         }
 
@@ -267,6 +275,39 @@ class TestSigninRequired:
     def test_the_auth_endpoints_stay_open(self, client):
         assert client.get("/api/auth/me").status_code == 200
         assert client.get("/api/auth/config").status_code == 200
+
+
+class TestFailClosed:
+    """No credentials and no opt-in: the API must not run open by accident."""
+
+    @pytest.fixture
+    def closed_client(self, monkeypatch):
+        monkeypatch.delenv("OPEN_MODE", raising=False)
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
+        monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "")
+        config_mod.reset_settings_cache()
+        from app.main import create_app
+
+        with TestClient(create_app()) as client:
+            yield client
+        config_mod.reset_settings_cache()
+
+    def test_data_routes_answer_401(self, closed_client):
+        response = closed_client.get("/api/lectures")
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Sign in required"
+
+    def test_upload_answers_401_before_reading_the_body(self, closed_client):
+        response = closed_client.post("/api/lectures/upload")
+        assert response.status_code == 401
+
+    def test_health_and_probes_stay_open(self, closed_client):
+        assert closed_client.get("/api/health").status_code == 200
+        me = closed_client.get("/api/auth/me").json()
+        assert me["auth_required"] is True
+        assert me["open_mode"] is False
+        assert closed_client.get("/api/auth/config").json()["auth_required"] is True
+        assert closed_client.get("/api/auth/google", follow_redirects=False).status_code == 503
 
 
 # --------------------------------------------------------------------------

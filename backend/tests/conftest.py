@@ -57,6 +57,8 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # .env, which does carry them.
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "")
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "")
+    # Open mode is an explicit opt-in now; the suite exercises it by default.
+    monkeypatch.setenv("OPEN_MODE", "true")
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     monkeypatch.setenv("SESSION_COOKIE_SECURE", "false")
     monkeypatch.setenv("FRONTEND_URL", "")

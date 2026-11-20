@@ -135,6 +135,15 @@ class Settings(BaseSettings):
     # Extra origins allowed to call the API from a browser, comma separated.
     allowed_origins: str = ""
 
+    # Open mode is an explicit local-demo opt-in. Without Google credentials
+    # AND this flag, data routes answer 401 instead of silently running open.
+    # Credentials always win: OPEN_MODE never disables a configured sign-in.
+    open_mode: bool = False
+    # Quota and operator role. 0 disables the lecture quota; admin emails are
+    # compared against the email from a verified Google id_token only.
+    max_lectures_per_user: int = 25
+    admin_emails: str = ""
+
     # --- Rate limits (per client address, per minute) ---
     rate_limit_write_per_minute: int = 120
     rate_limit_upload_per_minute: int = 10
@@ -190,6 +199,22 @@ class Settings(BaseSettings):
         time rather than at the callback.
         """
         return bool(self.google_client_id and self.google_client_secret)
+
+    def auth_required(self) -> bool:
+        """Whether data routes must see a signed-in user.
+
+        True unless the local demo explicitly opted into open mode with no
+        Google credentials. A half-configured deployment therefore fails
+        closed instead of exposing everyone's lectures.
+        """
+        return self.has_google_oauth() or not self.open_mode
+
+    def is_admin(self, email: str) -> bool:
+        """Whether a verified account email is an operator."""
+        value = (email or "").strip().lower()
+        return bool(value) and value in {
+            item.strip().lower() for item in self.admin_emails.split(",") if item.strip()
+        }
 
     def secure_session_cookies(self) -> bool:
         """Whether the session cookie carries the Secure flag.

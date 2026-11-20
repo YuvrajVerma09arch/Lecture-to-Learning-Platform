@@ -96,10 +96,18 @@ def create_app() -> FastAPI:
     async def _startup() -> None:
         db_mod.init_db()
         settings = get_settings()
-        if not settings.has_google_oauth():
+        if not settings.auth_required():
             log.warning(
-                "google sign-in is not configured; the API is unauthenticated",
-                extra={"hint": "set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"},
+                "open mode explicitly enabled; data routes are unauthenticated",
+                extra={"hint": "remove OPEN_MODE before exposing this service"},
+            )
+        elif not settings.has_google_oauth():
+            log.error(
+                "authentication is not configured; data routes answer 401",
+                extra={
+                    "hint": "set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, "
+                    "or OPEN_MODE=true for the local demo only"
+                },
             )
         log.info(
             "api ready",
@@ -107,6 +115,7 @@ def create_app() -> FastAPI:
                 "database": str(settings.db_path),
                 "frontend": FRONTEND_DIST.exists(),
                 "auth": settings.has_google_oauth(),
+                "auth_required": settings.auth_required(),
             },
         )
 

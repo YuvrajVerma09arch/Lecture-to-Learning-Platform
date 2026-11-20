@@ -313,6 +313,8 @@ that could not be run are in
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The component diagram and the data flow through every stage |
 | [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Methodology, measured latency, and the deployment comparison |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Secrets, upload validation, the credit ceiling, rate limits, retention, dependencies |
+| [`docs/DATA_POLICY.md`](docs/DATA_POLICY.md) | Data classification, consent, retention and the operator's pre-deployment checklist |
+| [`docs/SHIPPING.md`](docs/SHIPPING.md) | Verified release gates, rollout sequence and rollback plan |
 | [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) | The 60-second demo, with exact commands |
 | [`docs/live-api-findings.md`](docs/live-api-findings.md) | Every measured fact about the live Gnani, Google and Groq APIs |
 | [`docs/PHASE1_REPORT.md`](docs/PHASE1_REPORT.md) | The Phase 1 report: what was built, what was measured, what did not work |
