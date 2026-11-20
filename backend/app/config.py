@@ -11,6 +11,7 @@ import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -117,9 +118,10 @@ class Settings(BaseSettings):
     session_secret: str = Field(default="", repr=False)
     session_cookie_name: str = "l2lp_session"
     session_max_age_seconds: int = 14 * 24 * 60 * 60
-    # Secure cookies require HTTPS. Off for the local demo, which is served
-    # over http://localhost; a deployment should set SESSION_COOKIE_SECURE=true.
-    session_cookie_secure: bool = False
+    # Secure cookies require HTTPS. Unset means derive from FRONTEND_URL, so
+    # an HTTPS deployment is safe without an extra setting; an explicit value
+    # overrides the derivation (useful behind a TLS-terminating proxy).
+    session_cookie_secure: bool | None = None
 
     google_client_id: str = ""
     google_client_secret: str = Field(default="", repr=False)
@@ -188,6 +190,17 @@ class Settings(BaseSettings):
         time rather than at the callback.
         """
         return bool(self.google_client_id and self.google_client_secret)
+
+    def secure_session_cookies(self) -> bool:
+        """Whether the session cookie carries the Secure flag.
+
+        Derived from FRONTEND_URL because SessionMiddleware is configured
+        once when the app is created, not per request. An empty URL is the
+        local http:// demo and stays insecure on purpose.
+        """
+        if self.session_cookie_secure is not None:
+            return self.session_cookie_secure
+        return urlparse(self.frontend_url).scheme.lower() == "https"
 
     def frontend_base(self, request_base_url: str) -> str:
         """Where to send the browser after an action, with no trailing slash.

@@ -185,3 +185,53 @@ class TestRateLimits:
             conn.close()
 
         assert client.get("/api/auth/me").status_code == 429
+
+
+class TestSessionCookie:
+    def _set_cookie(self, monkeypatch, *, frontend: str, override: str | None) -> str:
+        from app.main import create_app
+
+        monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client")
+        monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-secret")
+        monkeypatch.setenv("FRONTEND_URL", frontend)
+        if override is None:
+            monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
+        else:
+            monkeypatch.setenv("SESSION_COOKIE_SECURE", override)
+        config_mod.reset_settings_cache()
+        try:
+            # create_app reads the settings once, the way a deployment does.
+            with TestClient(create_app(), base_url="https://testserver") as client:
+                response = client.get("/api/auth/google", follow_redirects=False)
+            assert response.status_code == 302
+            return response.headers.get("set-cookie", "")
+        finally:
+            config_mod.reset_settings_cache()
+
+    def test_an_https_frontend_gets_a_secure_cookie_by_default(self, monkeypatch):
+        cookie = self._set_cookie(
+            monkeypatch, frontend="https://app.example.com", override=None
+        )
+        assert "l2lp_session=" in cookie
+        assert "secure" in cookie.lower()
+        assert "httponly" in cookie.lower()
+        assert "samesite=lax" in cookie.lower()
+
+    def test_a_local_http_frontend_stays_insecure(self, monkeypatch):
+        cookie = self._set_cookie(
+            monkeypatch, frontend="http://localhost:5173", override=None
+        )
+        assert "l2lp_session=" in cookie
+        assert "secure" not in cookie.lower()
+
+    def test_an_explicit_false_overrides_an_https_frontend(self, monkeypatch):
+        cookie = self._set_cookie(
+            monkeypatch, frontend="https://app.example.com", override="false"
+        )
+        assert "secure" not in cookie.lower()
+
+    def test_an_explicit_true_protects_an_http_frontend(self, monkeypatch):
+        cookie = self._set_cookie(
+            monkeypatch, frontend="http://localhost:5173", override="true"
+        )
+        assert "secure" in cookie.lower()

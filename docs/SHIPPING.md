@@ -30,8 +30,9 @@ used to decide whether a rollout is safe, and what to do when it is not.
 
 ## Open before external exposure
 
-- Set `SESSION_COOKIE_SECURE=true` and serve HTTPS; the default is the local
-  `http://` demo.
+- Serve HTTPS and point `FRONTEND_URL` at the `https://` origin; the session
+  cookie's `Secure` flag is derived from it. Set `SESSION_COOKIE_SECURE`
+  explicitly only to override the derivation (e.g. behind a TLS proxy).
 - Configure production values for `FRONTEND_URL`, `ALLOWED_ORIGINS`,
   `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and the
   provider keys. Open mode (no Google client id) is for the local demo only.

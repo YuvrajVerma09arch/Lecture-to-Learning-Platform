@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
         max_age=settings.session_max_age_seconds,
         same_site="lax",
         # Secure cookies need HTTPS. Off for the local http:// demo.
-        https_only=settings.session_cookie_secure,
+        https_only=settings.secure_session_cookies(),
     )
 
     # Added second, so it wraps the session layer: it stamps security

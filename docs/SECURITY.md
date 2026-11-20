@@ -59,7 +59,13 @@ itself.
 - The LiveKit API secret never leaves the backend. The browser asks
   `POST /api/livekit/token` and receives a JWT scoped to one room
   (`lecture-<id>-<session>`) with a one-hour TTL. The secret is not in
-  the response, the URL, or the front-end bundle.
+  the response, the URL, or the front-end bundle. The JWT's `sub` and
+  participant metadata carry the opaque user id from the signed session —
+  never a client-supplied name — and the room metadata carries the same id
+  so the agent can attribute the session.
+- The session cookie is `HttpOnly`, `SameSite=lax`, and carries `Secure`
+  whenever `FRONTEND_URL` is an `https://` URL (or `SESSION_COOKIE_SECURE`
+  is explicitly enabled).
 - No provider key is in the front-end bundle. The web app talks only to this
   project's own API.
 - There is no third-party analytics or telemetry. Nothing is sent anywhere
@@ -295,10 +301,7 @@ These are real and are not hidden by the rest of this note.
 4. **The transcoded audio cache is never pruned.** `data/cache/ingest/`
    grows by roughly the size of each distinct recording. On a demo machine
    that is tens of megabytes; over months it would need a cleanup job.
-5. **The LiveKit room token has no per-student identity.** The participant
-   name is supplied by the client, so two students in the same room are
-   indistinguishable to the agent.
-6. **The demo lecture is a public recording** (a 2007 lecture from
+5. **The demo lecture is a public recording** (a 2007 lecture from
    Internet Archive, CC BY-NC-ND 4.0). A real deployment would handle
    recordings of students and teachers, which is a different sensitivity
    class.
