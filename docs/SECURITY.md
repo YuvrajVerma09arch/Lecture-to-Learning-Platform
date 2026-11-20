@@ -251,12 +251,15 @@ reviewing.
   `micromark-extension-math` and `rehype-katex`. `renderMath` only accepts a
   strict allowlist of equation characters and KaTeX runs with `trust: false`,
   so the reported prototype-pollution path is not reachable here.
-- The full `npm audit` also reports 1 high and 1 moderate in Vite/esbuild,
-  **development tooling only**. Production serves a prebuilt `dist/` from
-  FastAPI, so neither ships. The high fix is a Vite 5→8 major upgrade;
-  `npm audit fix --force` is deliberately not used. Deferred after review on
-  20 Nov 2026; re-evaluate by 20 Dec 2026 or before exposing the dev server.
-- `npm audit signatures`: all 217 packages have verified registry signatures.
+- The earlier Vite 5 / esbuild high and moderate advisories (dev tooling
+  only) were fixed on 20 Nov 2026 by upgrading to Vite 8.3.8 and
+  `@vitejs/plugin-react` 6.3.0 after reading the v7/v8 migration notes;
+  Node 20.20 meets the new engine requirement, the Tailwind plugin still
+  supports Vite 8, and the build plus all 32 E2E checks pass. The full
+  `npm audit` now reports the same 4 low findings as production.
+- `npm audit fix --force` was deliberately not used: the upgrade was
+  reviewed, pinned and verified on its own instead.
+- `npm audit signatures`: all packages have verified registry signatures.
 
 ## Known gaps
 
