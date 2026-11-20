@@ -75,6 +75,22 @@ async def upload_lecture(
     if not settings.has_gnani():
         raise HTTPException(status_code=503, detail="GNANI_API_KEY is not configured")
 
+    # A quota on owned rows, checked before any bytes are written. Re-uploads
+    # are safe: the pipeline reuses the lecture with the same source hash.
+    if settings.max_lectures_per_user > 0 and not settings.is_admin(user.get("email", "")):
+        with db_mod.get_conn() as conn:
+            owned = conn.execute(
+                "SELECT COUNT(*) FROM lectures WHERE owner_id=?", (user["id"],)
+            ).fetchone()[0]
+        if owned >= settings.max_lectures_per_user:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Lecture quota reached ({owned}/{settings.max_lectures_per_user}). "
+                    "Delete a lecture before uploading another."
+                ),
+            )
+
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
         raise HTTPException(
@@ -125,11 +141,24 @@ async def upload_lecture(
         extra={"size_bytes": size, "language_code": language_code, "title": title[:120]},
     )
 
-    background.add_task(_run_pipeline, target, title, language_code, user["id"])
+    background.add_task(
+        _run_pipeline,
+        target,
+        title,
+        language_code,
+        user["id"],
+        settings.is_admin(user.get("email", "")),
+    )
     return {"status": "accepted", "filename": target.name, "size_bytes": size}
 
 
-def _run_pipeline(path: Path, title: str, language_code: str, owner_id: str) -> None:
+def _run_pipeline(
+    path: Path,
+    title: str,
+    language_code: str,
+    owner_id: str,
+    quota_exempt: bool = False,
+) -> None:
     """Run the pipeline off the request thread."""
     from ..logging_setup import configure_logging
 
@@ -138,7 +167,11 @@ def _run_pipeline(path: Path, title: str, language_code: str, owner_id: str) -> 
     async def go() -> None:
         try:
             result = await orchestrator.run_notes_pipeline(
-                path, title=title, language_code=language_code, owner_id=owner_id
+                path,
+                title=title,
+                language_code=language_code,
+                owner_id=owner_id,
+                quota_exempt=quota_exempt,
             )
             log.info(
                 "lecture processed",

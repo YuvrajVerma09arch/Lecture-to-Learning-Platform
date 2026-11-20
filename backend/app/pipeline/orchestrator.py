@@ -86,6 +86,7 @@ async def run_notes_pipeline(
     bias_list: list[str] | None = None,
     on_progress: Any = None,
     owner_id: str = "anonymous",
+    quota_exempt: bool = False,
 ) -> PipelineResult:
     """Ingest a lecture and produce notes.
 
@@ -116,6 +117,29 @@ async def run_notes_pipeline(
 
     # --- Cache check ------------------------------------------------------
     with get_conn() as conn:
+        # Second line of defence for the per-user quota. The request-time
+        # check is a TOCTOU check: the lecture row is only created here, so
+        # two concurrent uploads can both pass it. This read happens on the
+        # same connection as the insert below; a fresh re-upload of the same
+        # audio already has a row and is never blocked.
+        existing = conn.execute(
+            "SELECT id FROM lectures WHERE content_hash=? AND language_code=? "
+            "AND owner_id=? ORDER BY created_at LIMIT 1",
+            (source_hash, language_code, owner_id),
+        ).fetchone()
+        if (
+            existing is None
+            and not quota_exempt
+            and settings.max_lectures_per_user > 0
+        ):
+            owned = conn.execute(
+                "SELECT COUNT(*) FROM lectures WHERE owner_id=?", (owner_id,)
+            ).fetchone()[0]
+            if owned >= settings.max_lectures_per_user:
+                raise ingest_mod.IngestError(
+                    f"Lecture quota reached ({owned}/{settings.max_lectures_per_user})."
+                )
+
         cached = cached_transcript(conn, digest)
         lecture_id = None
 
