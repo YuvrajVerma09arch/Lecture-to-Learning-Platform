@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import db as db_mod
+from .api import account, chat, flashcards, health, lectures, livekit
 from .api import auth as auth_api
-from .api import chat, flashcards, health, lectures, livekit
 from .api.auth import require_user
 from .config import PROJECT_ROOT, get_settings
 from .logging_setup import configure_logging, get_logger
@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
     # is not a probe, and you cannot sign in if the sign-in route is
     # guarded.
     signed_in = [Depends(require_user)]
+    app.include_router(account.router, dependencies=signed_in)
     app.include_router(lectures.router, dependencies=signed_in)
     app.include_router(chat.router, dependencies=signed_in)
     app.include_router(flashcards.router, dependencies=signed_in)

@@ -172,6 +172,14 @@ concurrency cap on outbound requests is still missing (gap 3).
 Everything under `data/` is gitignored, so none of it can be committed by
 accident.
 
+A signed-in student can download everything tied to their account from
+`GET /api/account/export`, or erase it with `DELETE /api/account`. Erasure
+removes the user row and its sessions, and cascades from each owned lecture
+to segments, notes, cards, review state and the FTS index. It deletes the
+per-lecture Markdown files and any content-addressed audio-cache directory
+no other lecture still references. The shared transcript rows and the
+global credit ledger have no owner and are deliberately kept.
+
 **What leaves the machine, and where:**
 
 | Data | Sent to | When |
@@ -294,8 +302,3 @@ These are real and are not hidden by the rest of this note.
    Internet Archive, CC BY-NC-ND 4.0). A real deployment would handle
    recordings of students and teachers, which is a different sensitivity
    class.
-7. **No data-subject export or deletion path.** A sign-in stores the
-   student's Google email in `users`, and transcripts, notes and generated
-   notes are kept alongside it. There is no end-to-end "export my data" or
-   "delete my account" flow covering the database, the caches and the
-   Markdown files. Add one before holding real student data.
