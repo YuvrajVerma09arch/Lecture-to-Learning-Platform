@@ -170,7 +170,7 @@ concurrency cap on outbound requests is still missing (gap 3).
 | Data | Where it lives | How long |
 |---|---|---|
 | The uploaded recording | `<tmp>/gnani-lecture-uploads/` | Deleted as soon as the pipeline finishes, success or failure |
-| The transcoded 16 kHz copy and the chunks | `data/cache/ingest/<hash>/` | **Kept.** It is the input to the cache key, and it is what a re-run reuses. About 23 MB for a 34-minute lecture. Not deleted automatically |
+| The transcoded 16 kHz copy and the chunks | `data/cache/ingest/<hash>/` | About 23 MB for a 34-minute lecture. Pruned after `CACHE_TTL_DAYS` (default 30) when no lecture or transcript references the source hash and no job is in flight |
 | The transcript, the segments, the notes, the flashcards | `data/app.sqlite3` | Kept until the lecture's rows are deleted. This is the product's own state, and it is what makes the notes reader and the doubt chat work |
 | The generated notes, as Markdown | `data/notes/<lecture_id>.md` | Kept alongside the database |
 | The credit ledger | `data/app.sqlite3` (`credit_usage`) | Kept; it is the daily accounting |
@@ -185,6 +185,12 @@ to segments, notes, cards, review state and the FTS index. It deletes the
 per-lecture Markdown files and any content-addressed audio-cache directory
 no other lecture still references. The shared transcript rows and the
 global credit ledger have no owner and are deliberately kept.
+
+**Outbound concurrency:** `MAX_OUTBOUND_CONCURRENT` (default 8) bounds the
+simultaneous HTTP calls to Gnani, Gemini and the OAuth endpoints in each API
+process. It is applied around the request itself, so retries, polling waits
+and long-lived provider sessions do not hold a slot. The agent worker is a
+separate process with its own budget.
 
 **What leaves the machine, and where:**
 
@@ -277,32 +283,20 @@ reviewing.
   reviewed, pinned and verified on its own instead.
 - `npm audit signatures`: all packages have verified registry signatures.
 
-## Known gaps
+## Deployment requirements
 
-These are real and are not hidden by the rest of this note.
+The code-side gaps in earlier versions of this note are closed: an
+unconfigured deployment fails closed, lectures are owner-scoped with a
+per-user quota and an operator role, outbound calls are bounded, the ingest
+cache has a TTL, and account export/erasure exists. What remains is for the
+operator to configure and run the service responsibly:
 
-1. **Sign-in is Google-only and optional.** With `GOOGLE_CLIENT_ID` and
-   `GOOGLE_CLIENT_SECRET` unset the API runs open: anyone who can reach
-   the port reads the lectures and uploads a recording. When they are set,
-   the data routes demand a session, but there is no password fallback, no
-   MFA beyond whatever the Google account has, and no account recovery of
-   our own. The open mode is for the local demo; a deployment must set the
-   two variables (and register the redirect URIs).
-2. **Open mode shares one corpus.** With sign-in off, every request is the
-   shared `anonymous` user and sees the same lectures — that is the local
-   demo's intent. With Google sign-in on, every lecture, segment, note and
-   flashcard is scoped to its owner in SQL: a foreign lecture id answers
-   404 (identical to an unknown id), and retrieval filters on `owner_id`
-   so one student's segments can never enter another's chat context,
-   search results, or deck view. There is still no per-user quota and no
-   admin role.
-3. **No per-host concurrency cap on outbound requests.** The batching and
-   pacing limits cover the notes workload, but there is no global cap on
-   concurrent outbound HTTP calls.
-4. **The transcoded audio cache is never pruned.** `data/cache/ingest/`
-   grows by roughly the size of each distinct recording. On a demo machine
-   that is tens of megabytes; over months it would need a cleanup job.
-5. **The demo lecture is a public recording** (a 2007 lecture from
-   Internet Archive, CC BY-NC-ND 4.0). A real deployment would handle
-   recordings of students and teachers, which is a different sensitivity
-   class.
+- Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`; leave `OPEN_MODE` unset.
+- Serve HTTPS with `FRONTEND_URL` set to the `https://` origin.
+- Set `ADMIN_EMAILS` to the operator addresses and review the per-user cap.
+- Remove the CC-licensed demo lecture and accept only recordings made with
+  the required consent. `docs/DATA_POLICY.md` lists the classification,
+  processors, retention and backup obligations.
+- Keep backups on the same retention window as the cache, so an erased
+  student's data does not survive in an old backup.
+- Run the release gates and first-hour checks in `docs/SHIPPING.md`.

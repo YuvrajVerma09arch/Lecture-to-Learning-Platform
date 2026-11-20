@@ -31,6 +31,7 @@ from typing import Any
 
 from ..config import get_settings
 from ..logging_setup import get_logger
+from ..outbound import outbound_permit
 
 log = get_logger(__name__)
 
@@ -122,7 +123,9 @@ async def embed_texts(
                     for t in batch
                 ]
             }
-            async with session.post(url, json=payload, headers=headers) as resp:
+            async with outbound_permit("gemini-embeddings"), session.post(
+                url, json=payload, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise EmbeddingError(f"Embedding request failed ({resp.status}): {body[:200]}")

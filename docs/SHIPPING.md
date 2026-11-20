@@ -34,8 +34,11 @@ used to decide whether a rollout is safe, and what to do when it is not.
   cookie's `Secure` flag is derived from it. Set `SESSION_COOKIE_SECURE`
   explicitly only to override the derivation (e.g. behind a TLS proxy).
 - Configure production values for `FRONTEND_URL`, `ALLOWED_ORIGINS`,
-  `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and the
-  provider keys. Open mode (no Google client id) is for the local demo only.
+  `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+  `ADMIN_EMAILS`, `MAX_LECTURES_PER_USER` and the provider keys. Leave
+  `OPEN_MODE` unset: an unconfigured deployment now fails closed.
+- Remove the CC demo recording, obtain consent for real recordings, and
+  align backup retention with the cache TTL — `docs/DATA_POLICY.md`.
 - Add error reporting and Web Vitals collection; run axe-core once.
 
 ## Rollout sequence

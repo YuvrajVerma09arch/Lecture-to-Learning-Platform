@@ -67,6 +67,9 @@ def isolated_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("RATE_LIMIT_WRITE_PER_MINUTE", "1000000")
     monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MINUTE", "1000000")
     monkeypatch.setenv("RATE_LIMIT_AUTH_PER_MINUTE", "1000000")
+    # A live sweeper would make filesystem tests non-deterministic; the
+    # pruning logic has its own explicit tests.
+    monkeypatch.setenv("CACHE_PRUNER_ENABLED", "false")
 
     config_mod.reset_settings_cache()
     yield config_mod.get_settings()

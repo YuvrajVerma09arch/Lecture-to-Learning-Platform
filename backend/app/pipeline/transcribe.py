@@ -31,6 +31,7 @@ import aiohttp
 
 from ..config import get_settings
 from ..logging_setup import get_logger
+from ..outbound import outbound_permit
 
 log = get_logger(__name__)
 
@@ -167,7 +168,7 @@ class GnaniBatchClient:
             if body_factory is not None:
                 body_kwargs.update(body_factory())
             try:
-                async with session.request(
+                async with outbound_permit("gnani"), session.request(
                     method, url, timeout=timeout, headers=headers, **body_kwargs
                 ) as resp:
                     if resp.status in RETRYABLE_STATUS:
@@ -303,7 +304,7 @@ class GnaniBatchClient:
         and stored immediately rather than persisted.
         """
         timeout = aiohttp.ClientTimeout(connect=15, total=120)
-        async with session.get(url, timeout=timeout) as resp:
+        async with outbound_permit("gnani-transcript"), session.get(url, timeout=timeout) as resp:
             if resp.status != 200:
                 body = await resp.text()
                 raise TranscribeError(f"Could not download transcript: {body[:200]}")

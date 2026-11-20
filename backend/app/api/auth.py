@@ -39,6 +39,7 @@ from joserfc.util import json_b64decode
 from .. import db as db_mod
 from ..config import get_settings
 from ..logging_setup import get_logger
+from ..outbound import outbound_permit
 
 log = get_logger(__name__)
 
@@ -166,7 +167,8 @@ async def require_user(request: Request) -> dict[str, Any]:
 async def _fetch_jwks(client: httpx.AsyncClient) -> None:
     """Fetch Google's signing keys. Raises if the response is unusable."""
     _jwks["last_attempt"] = time.time()
-    response = await client.get(GOOGLE_JWKS_URL)
+    async with outbound_permit("google-jwks"):
+        response = await client.get(GOOGLE_JWKS_URL)
     response.raise_for_status()
     payload = response.json()
     keys: dict[str, RSAKey] = {}
@@ -302,16 +304,17 @@ async def _exchange_code(client: httpx.AsyncClient, code: str, redirect_uri: str
     browser never sees it.
     """
     settings = get_settings()
-    response = await client.post(
-        GOOGLE_TOKEN_URL,
-        data={
-            "code": code,
-            "client_id": settings.google_client_id,
-            "client_secret": settings.google_client_secret,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        },
-    )
+    async with outbound_permit("google-token"):
+        response = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
     if response.status_code >= 400:
         log.warning("token exchange failed: HTTP %s", response.status_code)
         raise HTTPException(status_code=401, detail="Could not complete sign-in")

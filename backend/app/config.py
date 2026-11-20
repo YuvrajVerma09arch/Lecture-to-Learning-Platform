@@ -168,6 +168,18 @@ class Settings(BaseSettings):
     http_read_timeout: float = 120.0
     gnani_poll_timeout: float = 60.0
 
+    # Ingest cache retention. A work dir is pruned when no lecture or
+    # transcript references its source hash and every file in it is older
+    # than the TTL.
+    cache_ttl_days: int = 30
+    cache_prune_interval_seconds: int = 3600
+    cache_pruner_enabled: bool = True
+
+    # Outbound concurrency, per API process. Bounds simultaneous HTTP calls
+    # to all providers so a burst of uploads cannot flood them. The agent
+    # worker is a separate process and has its own budget.
+    max_outbound_concurrent: int = Field(default=8, ge=1)
+
     @field_validator("data_dir", "cache_dir", "db_path", mode="before")
     @classmethod
     def _expand(cls, v: str | Path) -> Path:

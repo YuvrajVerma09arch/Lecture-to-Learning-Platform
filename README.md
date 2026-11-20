@@ -144,6 +144,12 @@ the editable install's `.pth` file was skipped by Python — see
 | `HTTP_CONNECT_TIMEOUT` | no | `15` | Connect timeout for every outbound HTTP call |
 | `HTTP_READ_TIMEOUT` | no | `120` | Read timeout for every outbound HTTP call |
 | `GNANI_POLL_TIMEOUT` | no | `60` | Timeout for a single batch poll request |
+| `OPEN_MODE` | no | `false` | Local-demo opt-in for anonymous access. Never set it in a deployment |
+| `MAX_LECTURES_PER_USER` | no | `25` | Per-account lecture cap (`0` disables it); administrators bypass it |
+| `ADMIN_EMAILS` | no | empty | Comma-separated verified Google emails that may read `/api/admin/overview` |
+| `MAX_OUTBOUND_CONCURRENT` | no | `8` | Simultaneous outbound HTTP calls per API process |
+| `CACHE_TTL_DAYS` | no | `30` | Prune unreferenced ingest-cache directories older than this |
+| `CACHE_PRUNE_INTERVAL_SECONDS` | no | `3600` | How often the pruning sweep runs |
 
 Every setting is read through `pydantic-settings`, so the environment
 variable name is the field name in upper case. The two LLM workloads have

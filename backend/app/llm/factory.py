@@ -32,6 +32,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError, create_model
 
 from ..config import get_settings
 from ..logging_setup import get_logger
+from ..outbound import outbound_permit
 
 # The LiveKit plugins must be imported on the main thread: they register
 # themselves at import time, and the registration is rejected from a
@@ -689,7 +690,8 @@ async def complete_json(
 
     try:
         stream = llm.chat(**kwargs)
-        reply = await stream.collect()
+        async with outbound_permit("llm-completion"):
+            reply = await stream.collect()
     except Exception as exc:  # noqa: BLE001 - normalise provider errors
         raise classify_error(exc) from exc
 
@@ -766,7 +768,8 @@ async def complete_text(
     chat_ctx = _build_context(system, prompt)
     try:
         stream = llm.chat(chat_ctx=chat_ctx)
-        reply = await stream.collect()
+        async with outbound_permit("llm-text"):
+            reply = await stream.collect()
     except Exception as exc:  # noqa: BLE001
         raise LLMError(f"Model call failed: {exc}") from exc
 

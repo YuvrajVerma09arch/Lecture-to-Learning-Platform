@@ -11,6 +11,7 @@ does not belong in the same process as the request handler.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import Any
 
@@ -27,10 +28,25 @@ from .api.auth import require_user
 from .config import PROJECT_ROOT, get_settings
 from .logging_setup import configure_logging, get_logger
 from .middleware import SecurityMiddleware
+from .pipeline import cache_cleanup
 
 log = get_logger(__name__)
 
 FRONTEND_DIST = PROJECT_ROOT / "web" / "dist"
+
+
+async def _prune_cache_forever() -> None:
+    """Periodically prune old, unreferenced ingest work directories."""
+    settings = get_settings()
+    while True:
+        await asyncio.sleep(settings.cache_prune_interval_seconds)
+        try:
+            with db_mod.get_conn() as conn:
+                removed = await asyncio.to_thread(cache_cleanup.prune_ingest_cache, conn)
+            if removed:
+                log.info("ingest cache cleanup", extra={"removed": len(removed)})
+        except Exception as exc:  # noqa: BLE001 - never let the timer die
+            log.warning("ingest cache cleanup failed", extra={"error": str(exc)[:200]})
 
 
 def create_app() -> FastAPI:
@@ -119,6 +135,19 @@ def create_app() -> FastAPI:
                 "auth_required": settings.auth_required(),
             },
         )
+
+        if settings.cache_pruner_enabled:
+            app.state.cache_pruner_task = asyncio.create_task(
+                _prune_cache_forever(), name="ingest-cache-pruner"
+            )
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        task = getattr(app.state, "cache_pruner_task", None)
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
