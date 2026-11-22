@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from agent import tutor
+from app import config as config_mod
 from app import db as db_mod
 from app.api import livekit as livekit_api
 from app.retrieval import fts
@@ -699,3 +702,67 @@ class TestInstructionsFor:
             "never reconstruct",
         ):
             assert pin in lowered
+
+
+class TestHostedAgentContext:
+    """A hosted worker has no SQLite file; it asks the API over HTTPS."""
+
+    @pytest.fixture
+    def api_settings(self, monkeypatch):
+        monkeypatch.setenv("AGENT_API_URL", "https://api.example.com")
+        monkeypatch.setenv("AGENT_API_TOKEN", "secret-token")
+        config_mod.reset_settings_cache()
+        yield
+        config_mod.reset_settings_cache()
+
+    def _fake_client(self, monkeypatch, payload, status=200):
+        calls = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, url, *, params=None, headers=None):
+                calls.append((url, params, headers))
+                return SimpleNamespace(
+                    status_code=status,
+                    json=lambda: payload,
+                    raise_for_status=lambda: None,
+                )
+
+        monkeypatch.setattr(httpx, "Client", FakeClient)
+        return calls
+
+    def test_it_fetches_context_with_the_owner_and_service_token(
+        self, api_settings, monkeypatch
+    ):
+        calls = self._fake_client(
+            monkeypatch,
+            {
+                "title": "API Lecture",
+                "summary": "A short summary",
+                "document": "# API Lecture\n\n## Topic One\nBody",
+            },
+        )
+        state = tutor.TutorState(lecture_id="lec_api", user_id="usr_alice")
+        tutor.load_lecture_context(state)
+
+        assert calls[0][0] == (
+            "https://api.example.com/api/internal/lectures/lec_api/context"
+        )
+        assert calls[0][1] == {"owner_id": "usr_alice"}
+        assert calls[0][2]["Authorization"] == "Bearer secret-token"
+        assert state.lecture_title == "API Lecture"
+        assert state.lecture_topics == "Topic One"
+
+    def test_a_missing_lecture_leaves_the_fields_empty(self, api_settings, monkeypatch):
+        self._fake_client(monkeypatch, {}, status=404)
+        state = tutor.TutorState(lecture_id="lec_missing", user_id="usr_alice")
+        tutor.load_lecture_context(state)
+        assert state.lecture_title == ""

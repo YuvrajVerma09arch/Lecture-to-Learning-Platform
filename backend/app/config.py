@@ -135,6 +135,13 @@ class Settings(BaseSettings):
     # Extra origins allowed to call the API from a browser, comma separated.
     allowed_origins: str = ""
 
+    # The hosted agent runs in another container and has no access to this
+    # process's SQLite file. When both values are set it fetches lecture
+    # context over HTTPS with a bearer token instead. Empty locally: the
+    # in-process worker keeps reading the same database directly.
+    agent_api_url: str = ""
+    agent_api_token: str = Field(default="", repr=False)
+
     # Open mode is an explicit local-demo opt-in. Without Google credentials
     # AND this flag, data routes answer 401 instead of silently running open.
     # Credentials always win: OPEN_MODE never disables a configured sign-in.

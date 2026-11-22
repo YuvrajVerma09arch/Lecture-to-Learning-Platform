@@ -321,43 +321,80 @@ def _topics_from_notes(document: str) -> str:
     return ", ".join(topics)
 
 
+def _apply_context(state: TutorState, title: str, summary: str, document: str) -> None:
+    """Store the bounded, sanitised orientation for this session."""
+    state.lecture_title = _truncate_words((title or "").strip(), MAX_TITLE_CHARS)
+    state.lecture_summary = _truncate_words((summary or "").strip(), MAX_SUMMARY_CHARS)
+    state.lecture_topics = _topics_from_notes(document or "")
+
+
+def _load_context_from_db(state: TutorState) -> None:
+    """Local development: the worker shares the API's SQLite file."""
+    from app import db as db_mod
+
+    with db_mod.get_conn() as conn:
+        row = conn.execute(
+            "SELECT l.title, n.summary, n.document "
+            "FROM lectures l LEFT JOIN notes n ON n.lecture_id = l.id "
+            "WHERE l.id = ?",
+            (state.lecture_id,),
+        ).fetchone()
+    if row is not None:
+        _apply_context(state, row["title"], row["summary"], row["document"])
+
+
+def _load_context_from_api(state: TutorState, base: str, token: str) -> None:
+    """Production: the hosted agent has no database, only the API."""
+    import httpx
+
+    with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+        response = client.get(
+            f"{base.rstrip('/')}/api/internal/lectures/{state.lecture_id}/context",
+            params={"owner_id": state.user_id or ""},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    if response.status_code == 404:
+        return  # unknown or foreign lecture: no orientation
+    response.raise_for_status()
+    payload = response.json()
+    _apply_context(
+        state,
+        str(payload.get("title") or ""),
+        str(payload.get("summary") or ""),
+        str(payload.get("document") or ""),
+    )
+
+
 def load_lecture_context(state: TutorState) -> None:
     """Fill in what the lecture is about, for this session's instructions.
 
-    The worker calls this once at session start. The tutor otherwise
-    begins every session knowing only an opaque id -- it could not say
-    what the lecture was about, or recognise a question about the lecture
-    as being about *this* lecture, until the first search.
+    The worker calls this once at session start. With ``AGENT_API_URL`` and
+    ``AGENT_API_TOKEN`` configured it fetches the orientation from the API —
+    a hosted agent cannot read this project's SQLite file. Without them it
+    reads the local database, so development behaves exactly as before.
 
-    A missing lecture, a missing note, or an unreadable database leaves
-    the fields empty rather than raising: this is orientation, and a
-    session must never fail to start over it.
+    A missing lecture, a missing note, or a failed call leaves the fields
+    empty rather than raising: a session must never fail to start over
+    orientation.
     """
     if not state.lecture_id:
         return
 
-    from app import db as db_mod
-
     try:
-        with db_mod.get_conn() as conn:
-            row = conn.execute(
-                "SELECT l.title, n.summary, n.document "
-                "FROM lectures l LEFT JOIN notes n ON n.lecture_id = l.id "
-                "WHERE l.id = ?",
-                (state.lecture_id,),
-            ).fetchone()
+        from app.config import get_settings
+
+        settings = get_settings()
+        if settings.agent_api_url and settings.agent_api_token:
+            _load_context_from_api(
+                state, settings.agent_api_url, settings.agent_api_token
+            )
+        else:
+            _load_context_from_db(state)
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "lecture context could not be loaded",
             extra={"lecture_id": state.lecture_id, "error": str(exc)[:200]},
         )
-        return
-
-    if row is None:
-        return
-    state.lecture_title = _truncate_words((row["title"] or "").strip(), MAX_TITLE_CHARS)
-    state.lecture_summary = _truncate_words((row["summary"] or "").strip(), MAX_SUMMARY_CHARS)
-    state.lecture_topics = _topics_from_notes(row["document"] or "")
 
 
 def instructions_for(state: TutorState) -> str:

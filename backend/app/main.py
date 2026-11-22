@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import db as db_mod
-from .api import account, admin, chat, flashcards, health, lectures, livekit
+from .api import account, admin, chat, flashcards, health, internal, lectures, livekit
 from .api import auth as auth_api
 from .api.auth import require_user
 from .config import PROJECT_ROOT, get_settings
@@ -96,6 +96,9 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(auth_api.router)
+    # Service-token guarded, not session-guarded: the hosted agent has no
+    # user cookie. The endpoint scopes by the owner id from room metadata.
+    app.include_router(internal.router)
 
     # Everything that reads or writes lecture data needs a signed-in
     # request. Health and sign-in stay open: a probe that has to log in

@@ -147,6 +147,8 @@ the editable install's `.pth` file was skipped by Python — see
 | `OPEN_MODE` | no | `false` | Local-demo opt-in for anonymous access. Never set it in a deployment |
 | `MAX_LECTURES_PER_USER` | no | `25` | Per-account lecture cap (`0` disables it); administrators bypass it |
 | `ADMIN_EMAILS` | no | empty | Comma-separated verified Google emails that may read `/api/admin/overview` |
+| `AGENT_API_URL` | for a hosted agent | empty | Public API base URL the agent uses for lecture context; empty uses the local database |
+| `AGENT_API_TOKEN` | for a hosted agent | empty | Bearer token for `/api/internal/*`; set as a LiveKit secret in production |
 | `MAX_OUTBOUND_CONCURRENT` | no | `8` | Simultaneous outbound HTTP calls per API process |
 | `CACHE_TTL_DAYS` | no | `30` | Prune unreferenced ingest-cache directories older than this |
 | `CACHE_PRUNE_INTERVAL_SECONDS` | no | `3600` | How often the pruning sweep runs |
