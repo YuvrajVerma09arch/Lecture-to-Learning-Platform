@@ -144,6 +144,7 @@ the editable install's `.pth` file was skipped by Python — see
 | `HTTP_CONNECT_TIMEOUT` | no | `15` | Connect timeout for every outbound HTTP call |
 | `HTTP_READ_TIMEOUT` | no | `120` | Read timeout for every outbound HTTP call |
 | `GNANI_POLL_TIMEOUT` | no | `60` | Timeout for a single batch poll request |
+| `SESSION_COOKIE_SAMESITE` | no | `lax` | Use `none` when the SPA and API are on different sites (e.g. Vercel + Render) |
 | `OPEN_MODE` | no | `false` | Local-demo opt-in for anonymous access. Never set it in a deployment |
 | `MAX_LECTURES_PER_USER` | no | `25` | Per-account lecture cap (`0` disables it); administrators bypass it |
 | `ADMIN_EMAILS` | no | empty | Comma-separated verified Google emails that may read `/api/admin/overview` |

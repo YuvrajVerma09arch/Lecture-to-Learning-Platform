@@ -67,14 +67,25 @@ def create_app() -> FastAPI:
     # last, so the browser sees the same response whether or not the
     # origin was allowed.
     settings = get_settings()
+    if settings.session_cookie_samesite == "none" and not settings.secure_session_cookies():
+        log.warning(
+            "SameSite=none forces a Secure cookie; set FRONTEND_URL to https://",
+            extra={"frontend_url": settings.frontend_url},
+        )
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret_value(),
         session_cookie=settings.session_cookie_name,
         max_age=settings.session_max_age_seconds,
-        same_site="lax",
+        same_site=settings.session_cookie_samesite,
         # Secure cookies need HTTPS. Off for the local http:// demo.
-        https_only=settings.secure_session_cookies(),
+        # Browsers reject SameSite=None without Secure, so force it and
+        # make the misconfiguration visible rather than silently dropping
+        # the session cookie.
+        https_only=(
+            settings.secure_session_cookies()
+            or settings.session_cookie_samesite == "none"
+        ),
     )
 
     # Added second, so it wraps the session layer: it stamps security

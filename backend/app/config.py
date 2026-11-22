@@ -122,6 +122,9 @@ class Settings(BaseSettings):
     # an HTTPS deployment is safe without an extra setting; an explicit value
     # overrides the derivation (useful behind a TLS-terminating proxy).
     session_cookie_secure: bool | None = None
+    # "lax" works when the API and SPA share a site. A frontend on Vercel
+    # calling an API on Render is cross-site and needs "none" + Secure.
+    session_cookie_samesite: str = "lax"
 
     google_client_id: str = ""
     google_client_secret: str = Field(default="", repr=False)
@@ -186,6 +189,14 @@ class Settings(BaseSettings):
     # to all providers so a burst of uploads cannot flood them. The agent
     # worker is a separate process and has its own budget.
     max_outbound_concurrent: int = Field(default=8, ge=1)
+
+    @field_validator("session_cookie_samesite", mode="before")
+    @classmethod
+    def _samesite(cls, v: str) -> str:
+        value = str(v).strip().lower()
+        if value not in {"lax", "strict", "none"}:
+            raise ValueError("SESSION_COOKIE_SAMESITE must be lax, strict or none")
+        return value
 
     @field_validator("data_dir", "cache_dir", "db_path", mode="before")
     @classmethod

@@ -188,12 +188,23 @@ class TestRateLimits:
 
 
 class TestSessionCookie:
-    def _set_cookie(self, monkeypatch, *, frontend: str, override: str | None) -> str:
+    def _set_cookie(
+        self,
+        monkeypatch,
+        *,
+        frontend: str,
+        override: str | None,
+        samesite: str | None = None,
+    ) -> str:
         from app.main import create_app
 
         monkeypatch.setenv("GOOGLE_CLIENT_ID", "test-client")
         monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "test-secret")
         monkeypatch.setenv("FRONTEND_URL", frontend)
+        if samesite is None:
+            monkeypatch.delenv("SESSION_COOKIE_SAMESITE", raising=False)
+        else:
+            monkeypatch.setenv("SESSION_COOKIE_SAMESITE", samesite)
         if override is None:
             monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
         else:
@@ -234,4 +245,29 @@ class TestSessionCookie:
         cookie = self._set_cookie(
             monkeypatch, frontend="http://localhost:5173", override="true"
         )
+        assert "secure" in cookie.lower()
+
+
+class TestCrossSiteSessionCookie:
+    """A frontend on Vercel calls an API on Render: cross-site cookies."""
+
+    def test_none_and_secure_on_an_https_deployment(self, monkeypatch):
+        cookie = TestSessionCookie()._set_cookie(
+            monkeypatch,
+            frontend="https://lectures.vercel.app",
+            override=None,
+            samesite="none",
+        )
+        assert "samesite=none" in cookie.lower()
+        assert "secure" in cookie.lower()
+        assert "httponly" in cookie.lower()
+
+    def test_none_forces_secure_even_if_the_frontend_is_http(self, monkeypatch):
+        cookie = TestSessionCookie()._set_cookie(
+            monkeypatch,
+            frontend="http://localhost:5173",
+            override="false",
+            samesite="none",
+        )
+        assert "samesite=none" in cookie.lower()
         assert "secure" in cookie.lower()
