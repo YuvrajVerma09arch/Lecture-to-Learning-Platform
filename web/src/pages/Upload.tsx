@@ -63,8 +63,8 @@ export function Upload({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-6">
-      <h1 className="font-serif text-2xl font-semibold tracking-tight text-ink">
-        Upload a lecture
+      <h1 className="font-serif text-xl font-bold tracking-[0.02em] text-ink">
+        <span className="text-accent">▸</span> Upload a lecture
       </h1>
       <p className="mt-1 max-w-prose text-sm text-muted">
         Add a recording and it becomes notes, flashcards and a voice tutor
@@ -83,7 +83,7 @@ export function Upload({
           id="lecture-file"
           type="file"
           accept={ACCEPT}
-          className="input mt-2 cursor-pointer file:mr-3 file:cursor-pointer file:rounded-md file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-on-accent hover:file:bg-accent-hover"
+          className="input mt-2 cursor-pointer file:mr-3 file:cursor-pointer file:border-2 file:border-strong-line file:bg-accent file:px-3 file:py-1.5 file:font-serif file:text-xs file:font-bold file:uppercase file:tracking-[0.08em] file:text-on-accent hover:file:bg-accent-hover"
           onChange={(event) => pick(event.target.files?.[0] ?? null)}
         />
         {file && (

@@ -116,8 +116,8 @@ export function Chat({
 
   return (
     <main id="main" className="mx-auto max-w-3xl px-4 pb-24 pt-4">
-      <h1 className="font-serif text-xl font-semibold tracking-tight text-ink">
-        Doubt chat
+      <h1 className="font-serif text-xl font-bold tracking-[0.02em] text-ink">
+        <span className="text-accent">▸</span> Doubt chat
       </h1>
       <p className="mt-1 text-sm text-muted">
         {lecture ? `About ${lecture.title}. ` : ""}
