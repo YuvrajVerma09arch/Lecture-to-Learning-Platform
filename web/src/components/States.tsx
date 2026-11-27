@@ -80,7 +80,7 @@ export function Note({
 }) {
   const tones = {
     neutral: "well text-muted",
-    accent: "rounded-md border border-accent bg-accent-soft text-accent-ink",
+    accent: "border-2 border-accent bg-accent-soft text-accent-ink",
   };
   return (
     <p className={`px-3 py-2 text-sm ${tones[tone]}`}>{children}</p>

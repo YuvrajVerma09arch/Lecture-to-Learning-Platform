@@ -56,11 +56,11 @@ export function AudioMeter({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
-        className="mt-1 h-2 w-full overflow-hidden rounded-full border border-line bg-canvas"
+        className="mt-1 h-3 w-full overflow-hidden border-2 border-strong-line bg-canvas"
       >
         <div
           ref={fillRef}
-          className={`h-full rounded-full ${active ? "bg-accent" : "bg-strong-line"}`}
+          className={`h-full ${active ? "bg-accent" : "bg-strong-line"}`}
           style={{ width: `${percent}%` }}
         />
       </div>

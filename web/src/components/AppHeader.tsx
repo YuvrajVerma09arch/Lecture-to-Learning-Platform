@@ -78,16 +78,29 @@ export function AppHeader({
     setTheme(next);
   };
   return (
-    <header className="sticky top-0 z-30 border-b border-line bg-surface">
+    <header className="sticky top-0 z-30 border-b-2 border-strong-line bg-surface/95 backdrop-blur-[2px]">
       <div className="mx-auto flex max-w-5xl items-center gap-2 px-4 py-2.5 sm:gap-4">
         <span className="flex shrink-0 items-center gap-2 text-ink">
-          <span aria-hidden="true" className="h-3.5 w-3.5 bg-accent" />
-          <span className="font-serif text-base font-semibold tracking-tight">
-            Lecture to Learning
+          {/* A tiny pixel cartridge, drawn in CSS. */}
+          <span
+            aria-hidden="true"
+            className="relative inline-block h-4 w-4 bg-accent"
+            style={{
+              boxShadow:
+                "2px 2px 0 0 var(--color-bevel-dark), inset 0 0 0 1px var(--color-on-accent)",
+            }}
+          >
+            <span className="absolute inset-1 bg-on-accent/70" />
+          </span>
+          <span className="hidden font-serif text-sm font-bold tracking-[0.06em] sm:inline">
+            LECTURE<span className="text-accent">·</span>TO<span className="text-accent">·</span>LEARNING
+          </span>
+          <span className="font-serif text-sm font-bold tracking-[0.06em] sm:hidden">
+            L<span className="text-accent">·</span>2<span className="text-accent">·</span>L
           </span>
         </span>
         <nav aria-label="Main" className="ml-auto min-w-0">
-          <ul className="flex items-center gap-0.5 overflow-x-auto sm:gap-1">
+          <ul className="flex items-center gap-1 overflow-x-auto sm:gap-1.5">
             {items.map((item) => {
               const active = currentPath === item.path;
               return (
@@ -96,12 +109,13 @@ export function AppHeader({
                     type="button"
                     onClick={() => onNavigate(item.path)}
                     aria-current={active ? "page" : undefined}
-                    className={`whitespace-nowrap border-b-2 px-2 py-1.5 text-xs font-medium sm:px-2.5 sm:text-sm ${
+                    className={`whitespace-nowrap border-2 px-2 py-1 font-serif text-[0.625rem] font-bold uppercase tracking-[0.08em] transition-colors sm:px-2.5 sm:text-[0.6875rem] ${
                       active
-                        ? "border-accent text-ink"
-                        : "border-transparent text-muted hover:text-ink"
+                        ? "border-strong-line bg-accent text-on-accent shadow-[2px_2px_0_0_var(--color-shadow)]"
+                        : "border-transparent text-muted hover:border-strong-line hover:text-ink"
                     }`}
                   >
+                    {active ? "▸ " : ""}
                     {item.label}
                   </button>
                 </li>
@@ -116,12 +130,12 @@ export function AppHeader({
             theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
           }
           title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-          className="btn btn-quiet shrink-0 px-2 py-1.5"
+          className="btn btn-quiet shrink-0 px-2 py-1"
         >
           {theme === "dark" ? <SunIcon /> : <MoonIcon />}
         </button>
         {who && onLogout && (
-          <div className="flex shrink-0 items-center gap-1 border-l border-line pl-2 sm:gap-2 sm:pl-3">
+          <div className="flex shrink-0 items-center gap-1 border-l-2 border-line pl-2 sm:gap-2 sm:pl-3">
             <span
               className="hidden max-w-[10rem] truncate text-sm text-muted md:block"
               title={who}
@@ -131,7 +145,7 @@ export function AppHeader({
             <button
               type="button"
               onClick={onLogout}
-              className="btn btn-quiet px-2 py-1.5 text-xs sm:text-sm"
+              className="btn btn-quiet px-2 py-1 text-[0.625rem]"
             >
               Sign out
             </button>

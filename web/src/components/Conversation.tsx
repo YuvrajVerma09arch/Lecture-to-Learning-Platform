@@ -65,11 +65,21 @@ export function Conversation({
                   : "card border-l-4 border-l-accent"
               }`}
             >
-              <p className="eyebrow">
+              <p className="eyebrow flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2 w-2"
+                  style={{
+                    backgroundColor:
+                      item.speaker === "student"
+                        ? "var(--color-cyan)"
+                        : "var(--color-accent)",
+                  }}
+                />
                 {item.speaker === "student" ? "You" : "Tutor"}
               </p>
               <p
-                className={`mt-1 text-sm leading-6 text-body ${
+                className={`mt-1 text-base leading-relaxed text-body ${
                   item.final ? "" : "italic text-muted"
                 }`}
               >

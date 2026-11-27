@@ -108,7 +108,7 @@ function Paragraph({ node, children }: { node?: HastNode; children?: ReactNode }
         data-source-start={span.start}
         onClick={() => onToggleSource(span)}
         aria-expanded={active}
-        className="inline-flex items-center gap-2 rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-sm font-medium text-accent-ink hover:bg-accent-soft"
+        className="inline-flex items-center gap-2 border-2 border-strong-line bg-surface-2 px-2.5 py-1.5 text-sm font-bold text-accent-ink shadow-[2px_2px_0_0_var(--color-shadow)] hover:bg-accent-soft"
       >
         <span aria-hidden="true">{active ? "▾" : "▸"}</span>
         <span>
@@ -173,7 +173,7 @@ function Code({
     }
   }
   return (
-    <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[0.9em] text-ink">
+    <code className="border border-line bg-canvas px-1 py-0.5 font-mono text-[0.9em] text-ink">
       {children}
     </code>
   );
