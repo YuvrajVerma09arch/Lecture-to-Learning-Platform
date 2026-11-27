@@ -89,8 +89,10 @@ export function App() {
   // for a moment before the sign-in screen takes over.
   if (auth.status === "loading") {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-canvas">
-        <p role="status" className="eyebrow">
+      <main className="relative flex min-h-dvh items-center justify-center">
+        <div className="app-bg" aria-hidden="true" />
+        <div className="crt-overlay" aria-hidden="true" />
+        <p role="status" className="eyebrow relative z-10 blink">
           Loading Lecture to Learning
         </p>
       </main>
@@ -103,68 +105,74 @@ export function App() {
   }
 
   return (
-    <div className="min-h-dvh bg-canvas">
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-on-accent"
-      >
-        Skip to the main content
-      </a>
-      <AppHeader
-        currentPath={path}
-        items={NAV}
-        onNavigate={(target) =>
-          navigate(target, selectedId ? { lecture: selectedId } : undefined)
-        }
-        user={auth.data?.user ?? null}
-        onLogout={signOut}
-      />
-      <LectureBar
-        lectures={list}
-        selectedId={selectedId}
-        onSelect={selectLecture}
-        loading={lectures.status === "loading"}
-      />
-
-      {lectures.status === "error" && lectures.error ? (
-        <main className="mx-auto max-w-5xl px-4 py-6">
-          <ErrorState error={lectures.error} onRetry={lectures.reload} />
-        </main>
-      ) : path === "/chat" ? (
-        <Suspense
-          fallback={
-            <main className="mx-auto max-w-3xl px-4 py-6">
-              <p role="status" className="eyebrow">
-                Loading the doubt chat
-              </p>
-            </main>
-          }
+    <div className="relative min-h-dvh">
+      {/* The retro console backdrop: sky, starfield, grid, scanlines.
+          Fixed and non-interactive; the content sits above it. */}
+      <div className="app-bg" aria-hidden="true" />
+      <div className="crt-overlay" aria-hidden="true" />
+      <div className="relative z-10 min-h-dvh">
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-on-accent"
         >
-          <Chat
+          Skip to the main content
+        </a>
+        <AppHeader
+          currentPath={path}
+          items={NAV}
+          onNavigate={(target) =>
+            navigate(target, selectedId ? { lecture: selectedId } : undefined)
+          }
+          user={auth.data?.user ?? null}
+          onLogout={signOut}
+        />
+        <LectureBar
+          lectures={list}
+          selectedId={selectedId}
+          onSelect={selectLecture}
+          loading={lectures.status === "loading"}
+        />
+
+        {lectures.status === "error" && lectures.error ? (
+          <main className="mx-auto max-w-5xl px-4 py-6">
+            <ErrorState error={lectures.error} onRetry={lectures.reload} />
+          </main>
+        ) : path === "/chat" ? (
+          <Suspense
+            fallback={
+              <main className="mx-auto max-w-3xl px-4 py-6">
+                <p role="status" className="eyebrow">
+                  Loading the doubt chat
+                </p>
+              </main>
+            }
+          >
+            <Chat
+              lectureId={selectedId}
+              lectures={list}
+              onNavigate={navigate}
+            />
+          </Suspense>
+        ) : path === "/flashcards" ? (
+          // Keyed on the lecture: switching lectures starts a fresh deck
+          // instead of showing the previous lecture's cards.
+          <Flashcards
+            key={selectedId ?? "none"}
             lectureId={selectedId}
             lectures={list}
             onNavigate={navigate}
           />
-        </Suspense>
-      ) : path === "/flashcards" ? (
-        // Keyed on the lecture: switching lectures starts a fresh deck
-        // instead of showing the previous lecture's cards.
-        <Flashcards
-          key={selectedId ?? "none"}
-          lectureId={selectedId}
-          lectures={list}
-          onNavigate={navigate}
-        />
-      ) : path === "/upload" ? (
-        <Upload lectures={list} onUploaded={uploaded} />
-      ) : (
-        <Notes
-          lectureId={selectedId}
-          lectures={list}
-          route={route}
-          onNavigate={navigate}
-        />
-      )}
+        ) : path === "/upload" ? (
+          <Upload lectures={list} onUploaded={uploaded} />
+        ) : (
+          <Notes
+            lectureId={selectedId}
+            lectures={list}
+            route={route}
+            onNavigate={navigate}
+          />
+        )}
+      </div>
     </div>
   );
 }
